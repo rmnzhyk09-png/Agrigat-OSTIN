@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    container_name: unified-monitor-bot
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs

@@ -1,0 +1,1092 @@
+{
+ "schema_version": "1.0",
+ "generated": "2026-08-20",
+ "sources": [
+  {
+   "id": "probiv_bot_list",
+   "name": "Probiv bot list (OSINT-PROBIV)",
+   "url": "https://github.com/OSINT-PROBIV/Probiv_bot_list",
+   "stars": 102
+  },
+  {
+   "id": "probiv_osint_catalog",
+   "name": "probiv_OSINT_catalog (OSINT-check)",
+   "url": "https://github.com/OSINT-check/probiv_OSINT_catalog",
+   "stars": 22
+  }
+ ],
+ "categories": [
+  {
+   "id": "api",
+   "name": "API-провайдеры",
+   "desc": "Сервисы, предоставляющие API (АПИ) для автоматизации поиска"
+  },
+  {
+   "id": "phone",
+   "name": "По номеру телефона",
+   "desc": "Узнать владельца, соцсети, адрес и связанные данные"
+  },
+  {
+   "id": "fio",
+   "name": "По ФИО и дате рождения",
+   "desc": "Владелец, соцсети, адрес, документы и другое"
+  },
+  {
+   "id": "email",
+   "name": "По e-mail",
+   "desc": "Утечки, профили, привязки к сервисам"
+  },
+  {
+   "id": "telegram",
+   "name": "Пробив Telegram-аккаунта",
+   "desc": "Группы, сообщения, история имён, активность"
+  },
+  {
+   "id": "vk",
+   "name": "Пробив ВКонтакте",
+   "desc": "История профиля, удалённые фото, граф друзей, смена фамилий"
+  },
+  {
+   "id": "car",
+   "name": "По номеру авто / VIN",
+   "desc": "История автомобиля, проверка ГИБДД"
+  },
+  {
+   "id": "messenger",
+   "name": "По мессенджерам",
+   "desc": "Telegram, WhatsApp и другие: активность и связи"
+  },
+  {
+   "id": "social",
+   "name": "По соцсетям",
+   "desc": "VK, Instagram, OK, Facebook, Twitter и другие"
+  },
+  {
+   "id": "photo",
+   "name": "По фото",
+   "desc": "Поиск человека по фотографии"
+  },
+  {
+   "id": "ip",
+   "name": "По IP-адресу",
+   "desc": "Геолокация и связанные данные"
+  },
+  {
+   "id": "docs",
+   "name": "По документам",
+   "desc": "Паспорт, ИНН, СНИЛС, ВУ, ПТС"
+  },
+  {
+   "id": "password",
+   "name": "По паролю",
+   "desc": "Проверка утечек по паролю"
+  },
+  {
+   "id": "parser",
+   "name": "Парсеры",
+   "desc": "Сбор публикаций и аудитории"
+  },
+  {
+   "id": "discord",
+   "name": "Discord",
+   "desc": "Анализ данных Discord"
+  },
+  {
+   "id": "fun",
+   "name": "Развлекательные",
+   "desc": "Розыгрыши и поздравления"
+  },
+  {
+   "id": "other",
+   "name": "Остальное",
+   "desc": "Домены, ники, WHOIS, ЕГРЮЛ и прочее"
+  }
+ ],
+ "payment_methods": [
+  "Банковская карта — большинство ботов принимают оплату напрямую",
+  "Telegram Stars — официальная валюта Telegram (звёзды можно купить картой)",
+  "Крипта — через Telegram-кошельки @CryptoBot или @wallet (крипту можно купить картой)"
+ ],
+ "bots": [
+  {
+   "id": "infotrackpeople",
+   "name": "InfoTrackPeople",
+   "url": "https://t.me/treckbotpeople_bot",
+   "aliases": [],
+   "categories": [
+    "api",
+    "phone",
+    "fio",
+    "email",
+    "telegram",
+    "car",
+    "docs",
+    "password",
+    "photo",
+    "other"
+   ],
+   "has_api": true,
+   "website": null,
+   "api_docs": "https://docs.infotrackpeople.org/",
+   "price": "freemium",
+   "status": "active",
+   "searches": "Пробив по ФИО (+ dd.mm.yyyy), телефону, почте, ИНН, паспорту, СНИЛС, Telegram, юзернейму, адресу, номеру авто, VIN-коду, паролю, комментариям в Telegram. Есть бесплатная версия и технология поиска по фото.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "api"
+  },
+  {
+   "id": "sauron",
+   "name": "Sauron",
+   "url": "https://sauron.info",
+   "aliases": [],
+   "categories": [
+    "api"
+   ],
+   "has_api": true,
+   "website": "https://sauron.info",
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Популярный провайдер API, но есть сложности с регистрацией на сайте.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "api"
+  },
+  {
+   "id": "glaz_boga",
+   "name": "Глаз Бога",
+   "url": "https://t.me/Sky_OSINT_Robot",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "email",
+    "fio",
+    "social",
+    "car",
+    "docs",
+    "password",
+    "telegram",
+    "ip",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "closed",
+   "searches": "Поиск по телефону, email, ФИО, соцсетям, местоположению, авто, документам, паролю, Telegram, адресу, кадастровому номеру, юрлицам, ИНН, СНИЛС, паспорту, ВУ. ЗАКРЫТ НАВСЕГДА.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "orakul",
+   "name": "Оракул",
+   "url": "https://t.me/Oracle_OSINTbot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "fio",
+    "phone",
+    "telegram",
+    "car",
+    "photo",
+    "social",
+    "docs"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по ФИО, телефону, Telegram, номеру авто, фото, соцсетям, ИНН.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "duhless",
+   "name": "Духless",
+   "url": "https://t.me/Dyxless_OSINTsbot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "fio",
+    "docs",
+    "email",
+    "ip",
+    "password",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по номеру телефона, имени, паспорту, ИНН, СНИЛС, email, адресу, айпи, паролю.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "infolab",
+   "name": "InfoLab",
+   "url": "https://t.me/Info_LAB_Searchbot",
+   "aliases": [],
+   "categories": [
+    "photo",
+    "fio",
+    "phone",
+    "docs",
+    "car",
+    "social",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по фото, ФИО, контактам, документам, авто, адресу, соцсетям и вебкам/эскорт.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "photo"
+  },
+  {
+   "id": "overload",
+   "name": "OVERLOAD",
+   "url": "https://t.me/OVEROSINTBot?start=ref_Lr7HrR",
+   "aliases": [],
+   "categories": [
+    "fio",
+    "phone",
+    "email",
+    "vk",
+    "telegram",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по ФИО, телефону, почте, ВК, ТГ, доменам, никам и другим данным.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "fio"
+  },
+  {
+   "id": "detektiva",
+   "name": "Детектива",
+   "url": "https://t.me/Detectiva_Search_bot?start=ref7931581398",
+   "aliases": [],
+   "categories": [
+    "fio",
+    "phone",
+    "email",
+    "social"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по ФИО, телефону, email, VK, Instagram, OK, Facebook.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "social"
+  },
+  {
+   "id": "bloodlust",
+   "name": "BloodLust",
+   "url": "https://t.me/Blood_Lust_Searchbot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "fun"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Бот для осуществления телефонных розыгрышей и поздравлений.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "fun"
+  },
+  {
+   "id": "zernerda",
+   "name": "Zernerda",
+   "url": "https://t.me/zernerdooobot?start=C99B6FB2DA",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "fio",
+    "car",
+    "telegram",
+    "vk",
+    "social",
+    "email",
+    "docs",
+    "ip",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по телефону, ФИО, авто, Telegram, VK, Одноклассники, Twitter, Instagram, Facebook, почте, паспорту, ИНН, IP, User-Agent, стикерам.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "horus_eye",
+   "name": "Horus Eye",
+   "url": "https://t.me/HorusEye_netbot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "fio",
+    "phone",
+    "email",
+    "ip",
+    "password",
+    "docs",
+    "photo",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по имени, номеру, email, IP, паролю, адресу, ИНН, СНИЛС, паспорту, фото.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "fio"
+  },
+  {
+   "id": "defer_vektor",
+   "name": "Defer & Vektor",
+   "url": "https://t.me/Defer_searchbot?start=r_xQypCOXFf5",
+   "aliases": [],
+   "categories": [
+    "fio",
+    "phone",
+    "email"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "freemium",
+   "status": "active",
+   "searches": "Новый бот для пробива, 50 запросов бесплатно.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "noname",
+   "name": "NoName",
+   "url": "https://t.me/No_NameSearchBot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "email",
+    "fio",
+    "car",
+    "docs",
+    "social",
+    "vk",
+    "telegram",
+    "password",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по телефону, почте, ФИО, авто, документам, адресу, ВК, ОК, ТГ, паролю.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "infobaza",
+   "name": "InfoBaza",
+   "url": "https://t.me/Info_Baza_Searchbot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "fio",
+    "car",
+    "email",
+    "social",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по номеру телефона, ФИО, авто, email, соцсетям, ЕГРЮЛ, WHOIS, никнейму.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "universal_search",
+   "name": "Universal Search",
+   "url": "https://t.me/UniversalSearchEasyBot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "other",
+    "social"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск города, улицы, номера дома или квартиры, аккаунтов и прочего. Умеет искать в других ботах.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "other"
+  },
+  {
+   "id": "anubis",
+   "name": "ANUBIS",
+   "url": "https://t.me/anubis_osint_bot?start=ref_7931581398",
+   "aliases": [],
+   "categories": [
+    "fio",
+    "phone",
+    "ip",
+    "email",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по ФИО, номеру телефона, айпи, адресу, почте и другим данным.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "arhangel",
+   "name": "АРХАНГЕЛ",
+   "url": "https://t.me/AngelSearchersBot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "fio",
+    "car",
+    "email",
+    "docs"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по телефону, ФИО, авто, почте, ИНН.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "unamer",
+   "name": "Unamer",
+   "url": "https://t.me/unamer_bot?start=ref-bbmr8kZtGeeggLr",
+   "aliases": [
+    "https://t.me/unamer_bot?start=ref-db1ZLxaIAmy2xA"
+   ],
+   "categories": [
+    "telegram",
+    "phone"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по Telegram, телефону.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "telegram"
+  },
+  {
+   "id": "avinfo",
+   "name": "AVinfo",
+   "url": "https://t.me/avinfo?start=ref3707021",
+   "aliases": [],
+   "categories": [
+    "car",
+    "phone",
+    "photo",
+    "ip",
+    "email",
+    "docs"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Поиск по госномеру, VIN, номеру телефона, фото, IP, email, ИНН организации, номеру ПТС.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "car"
+  },
+  {
+   "id": "teleskan",
+   "name": "TeleSkan",
+   "url": "https://t.me/Tele_SkanBot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "telegram"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Найдёт группы, в которых состоит пользователь, и сообщения, которые он там оставлял.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "telegram"
+  },
+  {
+   "id": "funstat",
+   "name": "Fun Stat / Funstat",
+   "url": "https://t.me/FunstatusfanBot?start=0101D653C2D801000000",
+   "aliases": [
+    "https://t.me/fAh0uF_3zkD_bot"
+   ],
+   "categories": [
+    "telegram",
+    "phone",
+    "email",
+    "fio",
+    "messenger"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Находит чаты, в которых состоит пользователь, активность, телефон, электронную почту, ФИО. Первый бот с анализом сообщений: кружки, голосовые, фото и видео, которые пользователь отправлял в открытых чатах, и кто его упоминал.",
+   "sources": [
+    "probiv_bot_list",
+    "probiv_osint_catalog"
+   ],
+   "main": "telegram"
+  },
+  {
+   "id": "telesint",
+   "name": "TeleSINT",
+   "url": "https://t.me/telesint_bot?start=ref_1f6abb8ec7",
+   "aliases": [],
+   "categories": [
+    "telegram",
+    "messenger"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Профессиональный инструмент для исследования групп и пользователей Telegram.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "telegram"
+  },
+  {
+   "id": "insight",
+   "name": "Insight",
+   "url": "https://t.me/eyeofbeholder_bot",
+   "aliases": [],
+   "categories": [
+    "telegram"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "freemium",
+   "status": "active",
+   "searches": "Показывает интересы аккаунта, а платная версия выдаст историю изменения имени, номер телефона, группы и ссылки, которые публиковал пользователь.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "telegram"
+  },
+  {
+   "id": "tgscanrobot",
+   "name": "TgScanRobot",
+   "url": "https://t.me/tgscan_clone_robot",
+   "aliases": [],
+   "categories": [
+    "telegram"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Найдёт группы, в которых состоит этот аккаунт.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "telegram"
+  },
+  {
+   "id": "sangmata",
+   "name": "SangMata",
+   "url": "https://t.me/SangMata_BOT",
+   "aliases": [],
+   "categories": [
+    "telegram"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "История изменения имени аккаунта. Для поиска отправьте в бот ID аккаунта.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "telegram"
+  },
+  {
+   "id": "vkhistoryrobot",
+   "name": "VKHistoryRobot",
+   "url": "https://t.me/VKHistoryRobot",
+   "aliases": [],
+   "categories": [
+    "vk"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "История профиля с 2010 по 2023 год, включает аватары. Нужно вводить числовой ID страницы.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "vk"
+  },
+  {
+   "id": "social_graph",
+   "name": "Social Graph",
+   "url": "https://t.me/social_graph_osint_bot?start=7931581399",
+   "aliases": [],
+   "categories": [
+    "vk",
+    "social"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "На основе публичного профиля составляет граф друзей, на котором видны группы родственников, коллег, друзей по школе и т.д.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "vk"
+  },
+  {
+   "id": "findnamevk",
+   "name": "FindNameVk",
+   "url": "https://t.me/FindNameVk_bot",
+   "aliases": [],
+   "categories": [
+    "vk"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Ищет историю смены фамилий профиля по открытым источникам и указывает дату создания аккаунта.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "vk"
+  },
+  {
+   "id": "vbiv",
+   "name": "Vbiv",
+   "url": "https://t.me/Vbib_bot",
+   "aliases": [],
+   "categories": [
+    "vk",
+    "phone",
+    "email"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Находит удалённые фото аккаунта, иногда телефон и почту.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "vk"
+  },
+  {
+   "id": "aximo",
+   "name": "Aximo",
+   "url": "https://t.me/aximobot?start=ref7931581398",
+   "aliases": [],
+   "categories": [
+    "parser",
+    "vk"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Мгновенно сохраняет новые публикации аккаунта ВКонтакте.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "parser"
+  },
+  {
+   "id": "parser_pro",
+   "name": "Parser Pro",
+   "url": "https://t.me/botparser_bot?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "parser"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Помогает спарсить целевую аудиторию из чатов и не только.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "parser"
+  },
+  {
+   "id": "vin01",
+   "name": "VIN01",
+   "url": "https://t.me/vin01bot",
+   "aliases": [],
+   "categories": [
+    "car"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Проверка авто по VIN и госномеру, с отзывами и менеджментом избранного.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "car"
+  },
+  {
+   "id": "avtogram",
+   "name": "Автограм",
+   "url": "https://t.me/ABTOGRAMBOT?start=7931581398",
+   "aliases": [],
+   "categories": [
+    "car"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Сервис, позволяющий искать информацию об автомобиле по госномеру и зарабатывать на этом реальные деньги.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "car"
+  },
+  {
+   "id": "avtocod",
+   "name": "Avtocod",
+   "url": "https://t.me/avtocodbot",
+   "aliases": [],
+   "categories": [
+    "car"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Проверка авто по VIN, номеру шасси или государственному регистрационному знаку.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "car"
+  },
+  {
+   "id": "easyvin",
+   "name": "Изи ВИН",
+   "url": "https://t.me/EasyVINbot",
+   "aliases": [],
+   "categories": [
+    "car"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Выгодный способ проверки истории автомобиля по VIN или гос. номеру.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "car"
+  },
+  {
+   "id": "discord_sensor",
+   "name": "Discord Sensor",
+   "url": "https://t.me/discordsensorbot?start=kentId7931581398",
+   "aliases": [],
+   "categories": [
+    "discord"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Мощнейший инструмент для анализа данных Discord.",
+   "sources": [
+    "probiv_bot_list"
+   ],
+   "main": "discord"
+  },
+  {
+   "id": "void",
+   "name": "Void",
+   "url": "https://t.me/Coenmay_bot",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "messenger",
+    "social",
+    "email",
+    "fio",
+    "photo",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Новый проект, хорошо показывает себя на рынке данных. OSINT по никнеймам и логинам, поиск по соцсетям, мессенджерам и другим данным.",
+   "sources": [
+    "probiv_osint_catalog"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "dyx_ai",
+   "name": "Dyx AI",
+   "url": "https://t.me/FC433bot",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "messenger",
+    "social",
+    "email",
+    "fio",
+    "photo",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Новый проект с использованием ИИ для поиска и анализа данных: анализ активности, поиск связей между аккаунтами в мессенджерах и соцсетях, разные типы данных.",
+   "sources": [
+    "probiv_osint_catalog"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "sherlock",
+   "name": "Sherlock",
+   "url": "https://t.me/WBGJJ184bot",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "messenger",
+    "social",
+    "email",
+    "fio",
+    "photo",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Хороший OSINT-бот, подходит для комплексного анализа: поиск информации по Telegram ID, username, профили в Instagram, VK, OK, поиск по email и никнеймам.",
+   "sources": [
+    "probiv_osint_catalog"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "enigma",
+   "name": "Enigma",
+   "url": "https://t.me/Welkon_wenom_bot",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "messenger",
+    "email",
+    "fio",
+    "photo",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Интеллектуальный бот, который анализирует цифровые следы и часто находит данные, пропущенные другими: поиск по имени, нику, сопоставление имён и почт.",
+   "sources": [
+    "probiv_osint_catalog"
+   ],
+   "main": "phone"
+  },
+  {
+   "id": "cerera",
+   "name": "Cerera",
+   "url": "https://t.me/RDT760bot",
+   "aliases": [],
+   "categories": [
+    "phone",
+    "messenger",
+    "email",
+    "fio",
+    "photo",
+    "other"
+   ],
+   "has_api": false,
+   "website": null,
+   "api_docs": null,
+   "price": "paid",
+   "status": "active",
+   "searches": "Инструмент с упором на быстрый поиск по базам, часто даёт быстрые совпадения по номеру и связанным данным; проверка активности и базовых связей.",
+   "sources": [
+    "probiv_osint_catalog"
+   ],
+   "main": "phone"
+  }
+ ],
+ "groups": [
+  {
+   "id": "api",
+   "name": "API-провайдеры",
+   "members": [
+    "api"
+   ]
+  },
+  {
+   "id": "universal",
+   "name": "Универсальный пробив: телефон, ФИО, e-mail, соцсети, фото, IP, документы",
+   "members": [
+    "phone",
+    "fio",
+    "email",
+    "social",
+    "photo",
+    "ip",
+    "docs",
+    "password",
+    "other"
+   ]
+  },
+  {
+   "id": "telegram",
+   "name": "Telegram-аккаунт",
+   "members": [
+    "telegram",
+    "messenger"
+   ]
+  },
+  {
+   "id": "vk",
+   "name": "ВКонтакте",
+   "members": [
+    "vk"
+   ]
+  },
+  {
+   "id": "car",
+   "name": "Авто: госномер и VIN",
+   "members": [
+    "car"
+   ]
+  },
+  {
+   "id": "parser",
+   "name": "Парсеры",
+   "members": [
+    "parser"
+   ]
+  },
+  {
+   "id": "discord",
+   "name": "Discord",
+   "members": [
+    "discord"
+   ]
+  },
+  {
+   "id": "fun",
+   "name": "Развлекательные",
+   "members": [
+    "fun"
+   ]
+  }
+ ]
+}

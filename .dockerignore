@@ -1,0 +1,11 @@
+.venv
+data
+tools
+reports
+logs
+__pycache__
+*.pyc
+.env
+.env.txt
+.idea
+.git

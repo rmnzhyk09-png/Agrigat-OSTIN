@@ -1,0 +1,31 @@
+# Секреты — никогда не коммитим
+.env
+.env.txt
+.env.local
+
+# Виртуальные окружения и кэш Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Данные и логи (создаются на сервере)
+data/
+logs/
+*.db
+*.sqlite3
+
+# Node-часть (web) со зависимостями
+web/node_modules/
+
+# Артефакты деплоя и служебные копии
+deploy_git/
+*.zip
+_repo.json
+
+# IDE
+.idea/
+.vscode/
+
+# Прокси-утилиты (бинарники, не код)
+tools/
