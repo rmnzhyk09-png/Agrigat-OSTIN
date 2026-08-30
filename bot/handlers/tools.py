@@ -52,7 +52,7 @@ async def cmd_web(message: Message, command: CommandObject):
     await status.delete()
 
     items = result["items"]
-    web_items = [it for it in items if it["platform"] in ("google", "serpapi", "brave", "web")]
+    web_items = [it for it in items if it["platform"] in ("google", "serpapi", "brave", "web", "db")]
     lines = [f"<b>Веб-поиск: {query}</b>", ""]
     for i, it in enumerate(web_items[:15], 1):
         title = (it["text"] or "").split("\n")[0][:90]

@@ -6,6 +6,7 @@ from typing import Optional
 from .collectors import collect_all, get_collector, scraper
 from .analysis import classify_items, analyze_sentiment
 from .reporting import generate_summary
+from .dbimport.query import search_imported
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,21 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     """
     items = await collect_all(nickname, limit=50, period_days=30,
                               progress_callback=progress_callback, mode=mode)
+
+    # Добавляем записи из импортированной БД (Supabase / локальное зеркало)
+    try:
+        db_items = await search_imported(nickname, mode=mode, limit=20)
+        seen = {(it.get("url") or f"{it.get('platform')}:{it.get('id')}")
+                for it in items}
+        for it in db_items:
+            key = it.get("url") or f"db:{it.get('id')}"
+            if key not in seen:
+                seen.add(key)
+                items.append(it)
+        if db_items:
+            logger.info("db search: +%s записей из импортированной БД", len(items))
+    except Exception as ex:
+        logger.warning("поиск по импортированной БД: %s", ex)
 
     # Глубокий парсинг: полные тексты топовых страниц из веб-поиска
     if mode == "query":

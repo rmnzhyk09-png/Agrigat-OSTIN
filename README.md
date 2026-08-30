@@ -160,6 +160,8 @@ python -m bot.main
   автор — `author / from / user`, дата — `date / created_at`
 - **Разделы:** при обнаружении новой категории автоматически создаётся новый
   раздел (таблица `db_sections`), записи складываются в `db_records`
+- **Поиск по БД:** импортированные записи участвуют в `/find`, `/tag`, `/monitor`
+  и `/web` — результат помечается платформой «База импорта»
 - **Supabase (опционально):**
   1. В Supabase выполни скрипт `supabase/schema.sql` (SQL Editor)
   2. В `.env` пропиши `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`
