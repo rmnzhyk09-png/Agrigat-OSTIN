@@ -61,7 +61,7 @@ async def on_document(message: Message, bot: Bot):
     uploads.mkdir(parents=True, exist_ok=True)
     dest = uploads / f"{message.from_user.id}_{message.message_id}{ext}"
 
-    status = await message.answer("⏳ Скачиваю и анализирую файл…")
+    status = await message.answer("🕵️ Вскрываю файл и раскладываю по разделам…")
     try:
         await bot.download(document, destination=str(dest))
         if not dest.exists() or dest.stat().st_size == 0:
@@ -88,7 +88,7 @@ async def on_document(message: Message, bot: Bot):
         return
 
     lines = [
-        "✅ <b>База данных импортирована</b>",
+        "✅ <b>База принята в боевой реестр</b>",
         "",
         f"Файл: <code>{result.get('filename', filename)}</code>",
         f"Формат: <b>{result.get('format', '?')}</b>",
@@ -101,7 +101,11 @@ async def on_document(message: Message, bot: Bot):
         marker = "🆕" if name in result["new_sections"] else "•"
         lines.append(f"{marker} {name}")
     lines.append("")
-    lines.append(result.get("remote_note", "") or "")
+    note = result.get("remote_note", "") or ""
+    lines.append(note)
     if not result.get("supabase_configured", True):
-        lines.append("Данные сохранены локально в bot.db (таблицы db_*).")
+        lines.append("\n<i>Сейчас данные живут только локально и сотрутся при "
+                     "перезапуске Render. Ссылка на запчасть:</i>")
+        from ..dbimport.store import _config_hint
+        lines.append(_config_hint())
     await status.edit_text("\n".join(lines), parse_mode="HTML")

@@ -18,21 +18,35 @@ from aiogram.fsm.context import FSMContext
 
 # Переиспользуем диалог мониторинга: кнопки меню сразу задают режим поиска,
 # поэтому пользователю не нужно проходить шаг «выбор режима».
-from .monitor import MODE_HINTS, MonitorState
+from .monitor import MODE_HINTS, MonitorState, cmd_monitor
 from .catalog import cmd_catalog
 from .history import cmd_history
+from .subscribe import cmd_subscribe
 
 router = Router()
 
-# Главное меню: постоянная клавиатура с командами.
-# Текст кнопки = команда: нажатие отправляет её как обычное сообщение.
+# Главное меню: постоянная reply-клавиатура с кнопками-действиями.
+# Текст кнопки на русском, обработчик живёт в handlers/menu.py.
+RU_BUTTONS = {
+    "🔍 Поиск": "find",
+    "#️⃣ По тегу": "tag",
+    "👤 По аккаунту": "account",
+    "🌐 Веб-поиск": "web",
+    "📰 Каталог": "catalog",
+    "📜 История": "history",
+    "📡 Монитор": "monitor",
+    "👁 Слежение": "watch",
+    "📬 Дайджест": "subscribe",
+    "❓ Помощь": "help",
+}
+
 MENU = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="/find"), KeyboardButton(text="/web")],
-        [KeyboardButton(text="/tag"), KeyboardButton(text="/monitor")],
-        [KeyboardButton(text="/watch"), KeyboardButton(text="/catalog")],
-        [KeyboardButton(text="/rss"), KeyboardButton(text="/scrape")],
-        [KeyboardButton(text="/subscribe"), KeyboardButton(text="/help")],
+        [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="🌐 Веб-поиск")],
+        [KeyboardButton(text="#️⃣ По тегу"), KeyboardButton(text="👤 По аккаунту")],
+        [KeyboardButton(text="📡 Монитор"), KeyboardButton(text="👁 Слежение")],
+        [KeyboardButton(text="📰 Каталог"), KeyboardButton(text="📜 История")],
+        [KeyboardButton(text="📬 Дайджест"), KeyboardButton(text="❓ Помощь")],
     ],
     resize_keyboard=True,
 )
@@ -45,16 +59,16 @@ def _start_menu() -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔍 Глобальный поиск", callback_data="menu:find"),
-            InlineKeyboardButton(text="#️⃣ Поиск по тегу", callback_data="menu:tag"),
+            InlineKeyboardButton(text="🔍 Пробив по фразе", callback_data="menu:find"),
+            InlineKeyboardButton(text="#️⃣ Пробив по тегу", callback_data="menu:tag"),
         ],
         [
-            InlineKeyboardButton(text="👤 Поиск по аккаунту", callback_data="menu:account"),
-            InlineKeyboardButton(text="🌐 Веб-поиск", callback_data="menu:web"),
+            InlineKeyboardButton(text="👤 Пробив по аккаунту", callback_data="menu:account"),
+            InlineKeyboardButton(text="🌐 Пробив в сети", callback_data="menu:web"),
         ],
         [
-            InlineKeyboardButton(text="📰 Каталог OSINT", callback_data="menu:catalog"),
-            InlineKeyboardButton(text="📜 История запросов", callback_data="menu:history"),
+            InlineKeyboardButton(text="📰 Каталог пробива", callback_data="menu:catalog"),
+            InlineKeyboardButton(text="📜 История операций", callback_data="menu:history"),
         ],
         [InlineKeyboardButton(text="❓ Все команды", callback_data="menu:help")],
     ])
@@ -78,28 +92,29 @@ async def _send_help(message: Message):
         pass
 
     text = (
-        "<b>Agrigat Ostin</b> — мониторинг публичных источников.\n\n"
-        "<b>Поиск</b>\n"
-        "/find &lt;запрос&gt; — глобальный поиск\n"
-        "/tag &lt;тег&gt; — поиск по хештегу\n"
-        "/web &lt;запрос&gt; — веб-поиск (Google)\n"
-        "/monitor — выбор режима поиска\n\n"
-        "<b>Слежение</b>\n"
-        "/watch &lt;ник&gt; — наблюдать за аккаунтом\n"
-        "/unwatch &lt;ник&gt; — прекратить наблюдение\n\n"
-        "<b>Инструменты</b>\n"
+        "🕵️ <b>AGRIGAT OSTIN</b> — пробив-терминал: мониторинг публичных "
+        "источников, импорт баз данных, поиск по аккаунтам, никам и фразам.\n\n"
+        "<b>🔍 Поиск</b>\n"
+        "/find &lt;запрос&gt; — пробив по фразе\n"
+        "/tag &lt;тег&gt; — пробив по хештегу\n"
+        "/web &lt;запрос&gt; — пробив в сети (Google)\n"
+        "/monitor — выбор режима пробива\n\n"
+        "<b>👁 Слежение</b>\n"
+        "/watch &lt;ник&gt; — следить за целью\n"
+        "/unwatch &lt;ник&gt; — снять слежение\n\n"
+        "<b>🧰 Инструменты</b>\n"
+        "/import — импорт базы (CSV/JSON/SQLite/XLSX)\n"
         "/rss &lt;url&gt; — RSS-лента\n"
-        "/scrape &lt;url&gt; — содержимое страницы\n"
-        "/import — импорт файла БД (CSV/JSON/SQLite/XLSX)\n\n"
-        "<b>Каталог</b>\n"
+        "/scrape &lt;url&gt; — снять содержимое страницы\n\n"
+        "<b>📰 Каталог</b>\n"
         "/catalog — список групп\n"
         "/bot &lt;группа&gt; — боты группы\n"
         "/info &lt;название&gt; — карточка бота\n"
         "/search &lt;запрос&gt; — поиск по каталогу\n\n"
-        "<b>Сервис</b>\n"
+        "<b>📬 Служба</b>\n"
         "/subscribe — ежедневный дайджест\n"
-        "/unsubscribe — отключить дайджест\n"
-        "/history — история запросов\n"
+        "/unsubscribe — выключить дайджест\n"
+        "/history — история операций\n"
         "/report — последний отчёт\n"
         "/status — журнал задач\n"
         "/cancel — отменить действие"
@@ -114,37 +129,50 @@ async def cmd_start(message: Message):
     await message.answer("Быстрые действия 👇", reply_markup=_start_menu())
 
 
-@router.callback_query(F.data.startswith("menu:"))
-async def process_menu(callback: CallbackQuery, state: FSMContext):
-    """Обработка нажатий инлайн-меню главного экрана."""
-    action = (callback.data or "").split(":", 1)[-1]
-
+async def dispatch_menu(message: Message, state: FSMContext, action: str):
+    """Общий диспетчер действий меню (инлайн-кнопки и reply-клавиатура)."""
     if action == "help":
-        # Полный список команд тем же текстом, что и /help
-        await _send_help(callback.message)
+        await _send_help(message)
 
     elif action == "web":
-        # Веб-поиск идёт отдельным обработчиком в tools.py — даём формат
-        await callback.message.answer(
+        await message.answer(
             "Формат: /web &lt;запрос&gt;\nПример: /web лучшие ноутбуки 2026",
             parse_mode="HTML",
         )
 
     elif action == "catalog":
-        # Показываем группы каталога OSINT-ботов (тот же вывод, что /catalog)
-        await cmd_catalog(callback.message)
+        await cmd_catalog(message)
 
     elif action == "history":
-        # История последних запросов (тот же вывод, что /history)
-        await cmd_history(callback.message)
+        await cmd_history(message)
+
+    elif action == "monitor":
+        await cmd_monitor(message, state)
+
+    elif action == "watch":
+        await message.answer(
+            "Формат: /watch &lt;ник или ссылка&gt;\nПример: /watch @durov\n\n"
+            "Бот проверяет аккаунт каждые 20 минут и пришлёт новые посты."
+        )
+
+    elif action == "subscribe":
+        await cmd_subscribe(message, state)
 
     elif action in MENU_MODES:
-        # Сразу переходим к вводу запроса, минуя шаг «выбор режима»
         mode = MENU_MODES[action]
         await state.update_data(mode=mode)
         await state.set_state(MonitorState.query)
-        await callback.message.answer(MODE_HINTS.get(mode, MODE_HINTS["query"]))
+        await message.answer(MODE_HINTS.get(mode, MODE_HINTS["query"]))
 
+    else:
+        await message.answer(f"Неизвестное действие: {action}")
+
+
+@router.callback_query(F.data.startswith("menu:"))
+async def process_menu(callback: CallbackQuery, state: FSMContext):
+    """Обработка нажатий инлайн-меню главного экрана."""
+    action = (callback.data or "").split(":", 1)[-1]
+    await dispatch_menu(callback.message, state, action)
     # Подтверждаем нажатие, чтобы у кнопки не «крутились часы»
     await callback.answer()
 

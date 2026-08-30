@@ -17,6 +17,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError
+from aiogram.types import BotCommand
 
 from .config import settings
 from .db.database import init_db
@@ -25,6 +26,23 @@ from .scheduler import DigestScheduler
 from .utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
+
+# Меню команд (кнопка «/») — описания на русском
+COMMANDS_MENU = [
+    BotCommand(command="find", description="Пробив по фразе"),
+    BotCommand(command="tag", description="Пробив по тегу (хештег)"),
+    BotCommand(command="account", description="Пробив по аккаунту (ник/ссылка)"),
+    BotCommand(command="web", description="Пробив в сети (Google)"),
+    BotCommand(command="monitor", description="Выбор режима пробива"),
+    BotCommand(command="watch", description="Следить за аккаунтом"),
+    BotCommand(command="catalog", description="Каталог ботов и групп"),
+    BotCommand(command="import", description="Импорт базы данных"),
+    BotCommand(command="subscribe", description="Дайджест по тегам"),
+    BotCommand(command="history", description="История операций"),
+    BotCommand(command="report", description="Последний отчёт"),
+    BotCommand(command="status", description="Журнал задач"),
+    BotCommand(command="help", description="Все команды"),
+]
 
 
 def _build_session() -> AiohttpSession | None:
@@ -41,6 +59,15 @@ def _build_session() -> AiohttpSession | None:
 async def on_startup(bot: Bot):
     """При запуске."""
     await init_db()
+    try:
+        from .dbimport.store import check_supabase
+        ok, msg = await check_supabase()
+        if ok:
+            logger.info("Supabase подключён — поиск по импортированным БД активен")
+        else:
+            logger.warning("Supabase: %s", msg)
+    except Exception as ex:
+        logger.warning("Проверка Supabase не удалась: %s", ex)
     logger.info("Бот запущен. Пользователи: все команды доступны после /start")
 
 
@@ -84,6 +111,12 @@ async def main():
         print("=" * 60)
         return
     logger.info("Подключено к Telegram как @%s", me.username)
+
+    # Меню команд «/» с русскими описаниями (не ломает запуск при сбое)
+    try:
+        await bot.set_my_commands(COMMANDS_MENU)
+    except Exception as ex:
+        logger.warning("set_my_commands: %s", ex)
 
     # 3. Webhook и polling несовместимы: если токен использовался как webhook
     # (например, проектом social-monitor) — снимаем webhook перед polling

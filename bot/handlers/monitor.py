@@ -14,15 +14,15 @@ from ..reporting import generate_json, generate_csv
 router = Router()
 
 MODE_TITLES = {
-    "query": "Глобальный поиск",
-    "tag": "Поиск по тегу",
-    "account": "Поиск по аккаунту",
+    "query": "Пробив по фразе",
+    "tag": "Пробив по тегу",
+    "account": "Пробив по аккаунту",
 }
 
 MODE_HINTS = {
-    "query": "Отправьте запрос:\n\n<code>нейросети для бизнеса</code>",
+    "query": "Отправьте цель для пробива по фразе:\n\n<code>нейросети для бизнеса</code>",
     "tag": "Отправьте тег (с # или без):\n\n<code>#криптовалюта</code>",
-    "account": "Отправьте никнейм или ссылку:\n\n<code>@durov</code> или <code>t.me/durov</code>",
+    "account": "Отправьте никнейм или ссылку на цель:\n\n<code>@durov</code> или <code>t.me/durov</code>",
 }
 
 
@@ -35,9 +35,9 @@ class MonitorState(StatesGroup):
 
 def _mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Глобальный поиск", callback_data="mon:mode:query")],
-        [InlineKeyboardButton(text="Поиск по тегу", callback_data="mon:mode:tag")],
-        [InlineKeyboardButton(text="Поиск по аккаунту", callback_data="mon:mode:account")],
+        [InlineKeyboardButton(text="🕵️ Пробив по фразе", callback_data="mon:mode:query")],
+        [InlineKeyboardButton(text="#️⃣ Пробив по тегу", callback_data="mon:mode:tag")],
+        [InlineKeyboardButton(text="👤 Пробив по аккаунту", callback_data="mon:mode:account")],
     ])
 
 
@@ -47,7 +47,7 @@ async def _finish(message: Message, query: str, tags: list[str], mode: str):
 
     tags_line = ", ".join(tags) if tags else "—"
     status = await message.answer(
-        f"Поиск: <b>{query}</b>\nТеги: {tags_line}\nСбор данных…"
+        f"Цель: <b>{query}</b>\nТеги: {tags_line}\nСобираю данные…"
     )
 
     result = await run_monitoring(query, tags, mode=mode)
@@ -109,7 +109,7 @@ async def cmd_tag(message: Message, command: CommandObject):
 async def cmd_monitor(message: Message, state: FSMContext):
     """Начало мониторинга: выбор режима."""
     await state.set_state(MonitorState.mode)
-    await message.answer("Режим поиска:", reply_markup=_mode_keyboard())
+    await message.answer("Выберите режим пробива:", reply_markup=_mode_keyboard())
 
 
 @router.callback_query(F.data.startswith("mon:mode:"), MonitorState.mode)

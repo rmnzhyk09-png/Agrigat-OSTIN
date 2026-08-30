@@ -27,6 +27,18 @@ CHUNK = 200  # записей на один POST в Supabase
 SCHEMA_FILE = Path(__file__).resolve().parents[2] / "supabase" / "schema.sql"
 
 
+def _config_hint() -> str:
+    """Что именно не хватает для Supabase и как это починить."""
+    if not settings.supabase_url:
+        return ("Supabase не настроен: не задан <code>SUPABASE_URL</code>.\n"
+                "На Render: Dashboard → Environment → "
+                "<code>SUPABASE_URL=https://&lt;реф&gt;.supabase.co</code> → Deploy.")
+    return ("Supabase не настроен: не задан <code>SUPABASE_SERVICE_ROLE_KEY</code>.\n"
+            "Ключ: Supabase → Project Settings → API → <code>service_role</code> (секрет).\n"
+            "Добавь на Render → Environment → Deploy. Затем выполни "
+            "<code>supabase/schema.sql</code> в SQL Editor Supabase.")
+
+
 def _checksum(rec: dict) -> str:
     raw = f"{rec.get('source')}|{rec.get('author')}|{rec.get('text')}|" \
           f"{rec.get('url')}|{rec.get('date')}"
@@ -142,6 +154,20 @@ class SupabaseStore:
         return inserted
 
 
+# ---------- проверка при старте ----------
+
+async def check_supabase() -> tuple[bool, str]:
+    """Проверка подключения и наличия таблиц. Вызывается при старте бота."""
+    sb = SupabaseStore()
+    if not sb.enabled:
+        return False, _config_hint()
+    try:
+        async with httpx.AsyncClient(timeout=30, headers=sb._headers) as client:
+            return await sb.ensure_schema(client)
+    except httpx.HTTPError as ex:
+        return False, f"Supabase недоступен: {ex}"
+
+
 # ---------- локальное зеркало ----------
 
 def _mirror_local(meta: dict, records: list[dict], sections_found: int,
@@ -222,8 +248,7 @@ async def import_database_file(path, filename: str = "") -> dict:
                     remote_note = (f"Supabase: {len(records)} записей, "
                                    f"{len(new_sections)} новых разделов")
         else:
-            remote_note = ("Supabase не настроен — данные сохранены только "
-                           "локально. Добавь SUPABASE_URL и ключ в .env.")
+            remote_note = _config_hint()
     except (httpx.HTTPError, SupabaseError) as ex:
         logger.warning("supabase write error: %s", ex)
         remote_note = f"Ошибка записи в Supabase: {ex}"
