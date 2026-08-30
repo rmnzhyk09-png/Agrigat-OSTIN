@@ -28,9 +28,12 @@ HELP_TEXT = (
     "SQLite (.db/.sqlite3), CSV, JSON (включая Telegram export), Excel (.xlsx), "
     "текст (.txt)\n"
     "🖅 Архивы: ZIP и RAR — внутри разбираются БД, CSV, Excel, txt и торренты "
-    "(в т.ч. вложенные архивы)\n"
+    "(в т.ч. вложенные архивы). Лимиты распаковки: 1000 файлов / 1 ГБ "
+    "(меняются переменными MAX_ARCHIVE_FILES и MAX_ARCHIVE_TOTAL_MB)\n"
     "🧲 Торренты (.torrent): имя, файлы и размеры раздачи, трекеры, "
     "SHA1 (info_hash) и magnet-ссылка\n\n"
+    "<b>Защита от дублей:</b> если запись с такими данными уже есть в базе, "
+    "она пропускается; база дополняется только новыми записями.\n\n"
     "<b>Формат данных в файле:</b>\n"
     "• текст записи — колонка <code>text / message / content</code>\n"
     "• автор — <code>author / from / user</code>\n"
@@ -97,7 +100,15 @@ async def on_document(message: Message, bot: Bot):
         "",
         f"Файл: <code>{result.get('filename', filename)}</code>",
         f"Формат: <b>{result.get('format', '?')}</b>",
-        f"Записей с текстом: <b>{result.get('total', 0)}</b>",
+        f"Записей в файле: <b>{result.get('total', 0)}</b>",
+        f"🆕 Добавлено новых: <b>{result.get('added', 0)}</b>",
+    ]
+    dupes = result.get("duplicates", 0)
+    if dupes:
+        lines.append(f"♻️ Дубликатов пропущено: <b>{dupes}</b>")
+    elif result.get("added", 1) == 0:
+        lines.append("♻️ Все записи уже были в базе — новые данные не добавлены.")
+    lines += [
         f"Разделов найдено: <b>{len(result['sections'])}</b>",
         "",
         "<b>Разделы:</b>",

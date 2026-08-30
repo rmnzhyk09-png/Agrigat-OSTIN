@@ -127,9 +127,13 @@ class SupabaseStore:
         data = r.json()
         return (data[0].get("id") if isinstance(data, list) and data else 0)
 
-    async def insert_records(self, client: httpx.AsyncClient, records: list[dict]) -> int:
-        """Вставка порциями; дубли отсекаются по checksum (on_conflict)."""
-        inserted = 0
+    async def insert_records(self, client: httpx.AsyncClient,
+                             records: list[dict]) -> tuple[int, int]:
+        """Вставка порциями; дубли отсекаются по checksum (on_conflict).
+
+        Возвращает (вставлено_новых, пропущено_дублей).
+        """
+        inserted = skipped = 0
         for start in range(0, len(records), CHUNK):
             rows = []
             for rec in records[start:start + CHUNK]:
@@ -145,13 +149,16 @@ class SupabaseStore:
                     "raw": json.dumps(rec, ensure_ascii=False),
                 })
             headers = {**self._headers,
-                       "Prefer": "resolution=ignore-duplicates,return=minimal"}
+                       "Prefer": "resolution=ignore-duplicates,return=representation"}
             r = await client.post(self.url + "/db_records",
                                   params={"on_conflict": "checksum"},
                                   json=rows, headers=headers)
             r.raise_for_status()
-            inserted += len(rows)
-        return inserted
+            data = r.json()
+            if isinstance(data, list) and data:
+                inserted += len(data)
+            skipped += len(rows) - (len(data) if isinstance(data, list) else 0)
+        return inserted, skipped
 
 
 # ---------- проверка при старте ----------
@@ -170,8 +177,43 @@ async def check_supabase() -> tuple[bool, str]:
 
 # ---------- локальное зеркало ----------
 
+def _dedupe(records: list[dict], known: set[str]) -> tuple[list[dict], int]:
+    """Оставляет только записи с новым checksum.
+
+    Возвращает (свежие_записи, сколько_пропущено_дублей).
+    """
+    seen = set(known)
+    fresh: list[dict] = []
+    skipped = 0
+    for rec in records:
+        c = _checksum(rec)
+        if c in seen:
+            skipped += 1
+            continue
+        seen.add(c)
+        fresh.append(rec)
+    return fresh, skipped
+
+
+def _known_checksums() -> set[str]:
+    """Все checksum уже хранящиеся локально (для обычного отбора дублей)."""
+    try:
+        Base.metadata.create_all(sync_engine)
+    except Exception:
+        return set()
+    try:
+        with SyncSessionLocal() as session:
+            return set(session.execute(select(DbRecord.checksum)).scalars().all())
+    except Exception:
+        return set()
+
+
 def _mirror_local(meta: dict, records: list[dict], sections_found: int,
-                  sections_new: int) -> int:
+                  sections_new: int) -> tuple[int, int, int]:
+    """Записывает в локальное зеркало только НОВЫЕ записи (дубли пропускаются).
+
+    Возвращает (import_id, добавлено, пропущено_дублей).
+    """
     try:
         Base.metadata.create_all(sync_engine)
     except Exception:
@@ -185,12 +227,15 @@ def _mirror_local(meta: dict, records: list[dict], sections_found: int,
         session.flush()
         import_id = imp.id
 
-        known = set(session.execute(select(DbSection.name)).scalars().all())
-        for rec in records:
+        known = set(session.execute(select(DbRecord.checksum)).scalars().all())
+        fresh, skipped = _dedupe(records, known)
+
+        seen_sections = set(session.execute(select(DbSection.name)).scalars().all())
+        for rec in fresh:
             name = rec.get("section") or "Прочее"
-            if name not in known:
+            if name not in seen_sections:
                 session.add(DbSection(name=name))
-                known.add(name)
+                seen_sections.add(name)
         session.add_all([
             DbRecord(import_id=import_id, section=rec.get("section") or "Прочее",
                      source=(rec.get("source") or "")[:255],
@@ -200,10 +245,10 @@ def _mirror_local(meta: dict, records: list[dict], sections_found: int,
                      date=(rec.get("date") or "")[:100],
                      checksum=_checksum(rec),
                      raw=json.dumps(rec, ensure_ascii=False))
-            for rec in records
+            for rec in fresh
         ])
         session.commit()
-        return import_id
+        return import_id, len(fresh), skipped
 
 
 # ---------- точка входа ----------
@@ -223,19 +268,23 @@ async def import_database_file(path, filename: str = "") -> dict:
     await asyncio.to_thread(analyze_records, records)
     sections = count_sections(records)
 
+    # Сухая защита от дублей: дополняем базу только тем, чего в ней ещё нет.
+    known = await asyncio.to_thread(_known_checksums)
+    fresh, duplicates = _dedupe(records, known)
+
     sb = SupabaseStore()
     remote_note = ""
     new_sections: list[str] = []
     try:
-        if sb.enabled:
+        if sb.enabled and fresh:
             async with httpx.AsyncClient(timeout=60,
                                          headers=sb._headers) as client:
                 ok, msg = await sb.ensure_schema(client)
                 if not ok:
                     remote_note = msg
                 else:
-                    known = await sb.list_sections(client)
-                    new_sections = [s for s in sections if s not in known]
+                    known_remote = await sb.list_sections(client)
+                    new_sections = [s for s in sections if s not in known_remote]
                     for name in new_sections:
                         await sb.create_section(client, name)
                     payload = {"file_name": meta.get("filename", ""),
@@ -244,8 +293,9 @@ async def import_database_file(path, filename: str = "") -> dict:
                                "sections_found": len(sections),
                                "sections_new": len(new_sections)}
                     await sb.insert_import(client, payload)
-                    await sb.insert_records(client, records)
-                    remote_note = (f"Supabase: {len(records)} записей, "
+                    ins, dup = await sb.insert_records(client, fresh)
+                    remote_note = (f"Supabase: +{ins} новых, "
+                                   f"{dup} дублей, "
                                    f"{len(new_sections)} новых разделов")
         else:
             remote_note = _config_hint()
@@ -253,16 +303,20 @@ async def import_database_file(path, filename: str = "") -> dict:
         logger.warning("supabase write error: %s", ex)
         remote_note = f"Ошибка записи в Supabase: {ex}"
 
-    # Зеркало в собственную БД всегда (для резюме и офлайн-реестра)
+    # Зеркало в собственную БД всегда (для резюме и офлайн-реестра).
+    # В него тоже попадают только новые записи; дубли пропускаются.
     try:
-        await asyncio.to_thread(_mirror_local, meta, records,
-                                len(sections), len(new_sections))
+        if fresh:
+            await asyncio.to_thread(_mirror_local, meta, fresh,
+                                    len(sections), len(new_sections))
     except Exception:
         logger.exception("local mirror error")
 
     return {
         **meta,
         "total": len(records),
+        "added": len(fresh),
+        "duplicates": duplicates,
         "sections": sections,
         "new_sections": new_sections,
         "remote_note": remote_note,

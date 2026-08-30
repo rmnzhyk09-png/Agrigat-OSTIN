@@ -3,6 +3,7 @@
 import csv
 import json
 import logging
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -18,9 +19,13 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".db", ".sqlite", ".sqlite3", ".csv", ".json", ".xlsx",
                         ".zip", ".rar", ".torrent", ".txt"}
 
-# Ограничения при распаковке архивов (защита от «архивных» атак)
-MAX_ARCHIVE_FILES = 400
-MAX_ARCHIVE_TOTAL = 512 * 1024 * 1024  # 512 МБ
+# Ограничения при распаковке архивов (защита от «архивных» атак).
+# Настраиваются переменными окружения (Render → Environment):
+#   MAX_ARCHIVE_FILES   — максимум файлов в архиве (по умолчанию 1000)
+#   MAX_ARCHIVE_TOTAL_MB — суммарный объём распакованных данных (по умолчанию 1024)
+MAX_ARCHIVE_FILES = int(os.getenv("MAX_ARCHIVE_FILES", "1000"))
+MAX_ARCHIVE_TOTAL_MB = int(os.getenv("MAX_ARCHIVE_TOTAL_MB", "1024"))
+MAX_ARCHIVE_TOTAL = MAX_ARCHIVE_TOTAL_MB * 1024 * 1024
 MAX_ARCHIVE_DEPTH = 3
 
 # Колонки, которые ищем в данных (основные русские и английские варианты)
@@ -123,7 +128,7 @@ def _extract_zip(path: Path, target: Path):
         for info in members:
             total += info.file_size
             if total > MAX_ARCHIVE_TOTAL:
-                raise ValueError("Архив больше 512 МБ — не разбираю")
+                raise ValueError(f"Архив больше {MAX_ARCHIVE_TOTAL_MB} МБ — не разбираю")
             fn = _safe_member(info.filename)
             if not fn:
                 continue
@@ -143,7 +148,7 @@ def _extract_rar(path: Path, target: Path):
                 raise ValueError(f"В архиве больше {MAX_ARCHIVE_FILES} файлов")
             total = sum(i.file_size for i in infos)
             if total > MAX_ARCHIVE_TOTAL:
-                raise ValueError("Архив больше 512 МБ — не разбираю")
+                raise ValueError(f"Архив больше {MAX_ARCHIVE_TOTAL_MB} МБ — не разбираю")
             for info in infos:
                 fn = _safe_member(info.filename)
                 if not fn:

@@ -1,15 +1,14 @@
 """Мониторинг: глобальный поиск, поиск по тегам и по аккаунту."""
-import io
 import logging
 
 from aiogram import Router, F
-from aiogram.types import Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from ..tasks import run_monitoring
-from ..reporting import generate_json, generate_csv
+from .fmt_menu import send_findings
 
 router = Router()
 
@@ -42,9 +41,7 @@ def _mode_keyboard() -> InlineKeyboardMarkup:
 
 
 async def _finish(message: Message, query: str, tags: list[str], mode: str):
-    """Прогнать мониторинг и отправить сводку + график + файлы."""
-    from .tools import _send_reports
-
+    """Прогнать мониторинг и показать сводку + выбор формата сохранения."""
     tags_line = ", ".join(tags) if tags else "—"
     status = await message.answer(
         f"Цель: <b>{query}</b>\nТеги: {tags_line}\nСобираю данные…"
@@ -57,24 +54,12 @@ async def _finish(message: Message, query: str, tags: list[str], mode: str):
         return
 
     await status.delete()
-    await message.answer(result["summary"], parse_mode="HTML")
-
-    items = result["items"]
-    for name, content, caption in [
-        ("report.json", generate_json(items), "JSON"),
-        ("report.csv", generate_csv(items), "CSV"),
-    ]:
-        await message.answer_document(
-            document=BufferedInputFile(content.encode("utf-8"), filename=name),
-            caption=caption,
-        )
-    # График PNG + PDF + Markdown
-    await _send_reports(message, items, result, query)
-
-    # Записываем в БД: история, задача, отчёт (для /history, /status, /report)
+    title = f"{MODE_TITLES.get(mode, 'Поиск')}: {query}"
+    await send_findings(message, title, result["items"], result)
     from ..db import repo
     try:
-        await repo.record_search(message.from_user.id, f"[{mode}] {query}", len(items))
+        await repo.record_search(message.from_user.id, f"[{mode}] {query}",
+                                 len(result["items"]))
         await repo.record_job(message.from_user.id, f"monitor:{mode}", result["stats"])
         await repo.record_report(message.from_user.id, result["summary"], result["stats"])
     except Exception as ex:

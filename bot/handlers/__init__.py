@@ -13,6 +13,7 @@ from .tags import router as tags_router
 from .report import router as report_router
 from .subscribe import router as subscribe_router
 from .import_db import router as import_router
+from .fmt_menu import router as fmt_menu_router
 from .menu import router as menu_router
 
 
@@ -32,6 +33,7 @@ def get_router() -> Router:
     router.include_router(report_router)
     router.include_router(subscribe_router)
     router.include_router(import_router)
+    router.include_router(fmt_menu_router)
     router.include_router(menu_router)
 
     return router

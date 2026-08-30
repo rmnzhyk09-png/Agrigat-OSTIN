@@ -7,9 +7,6 @@ from aiogram.types import Message
 
 from ..collectors.scraper import DomainScraper
 from ..collectors.rss_collector import parse_feed
-from ..reporting.charts import generate_chart_png
-from ..reporting.pdf import generate_pdf
-from ..reporting.generate import generate_markdown
 from ..tasks import run_monitoring
 
 logger = logging.getLogger(__name__)
@@ -53,13 +50,12 @@ async def cmd_web(message: Message, command: CommandObject):
 
     items = result["items"]
     web_items = [it for it in items if it["platform"] in ("google", "serpapi", "brave", "web", "db")]
-    lines = [f"<b>Веб-поиск: {query}</b>", ""]
-    for i, it in enumerate(web_items[:15], 1):
-        title = (it["text"] or "").split("\n")[0][:90]
-        lines.append(f"{i}. <a href=\"{it['url']}\">{_esc(title)}</a>")
-    await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
+    if not web_items:
+        await message.answer("Ничего не найдено. Попробуйте изменить запрос.")
+        return
 
-    await _send_reports(message, web_items, result, query)
+    from .fmt_menu import send_findings
+    await send_findings(message, f"Веб-поиск: {query}", web_items, result)
 
     from ..db import repo
     try:
@@ -140,27 +136,3 @@ async def cmd_scrape(message: Message, command: CommandObject):
 
 def _esc(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-async def _send_reports(message: Message, items: list[dict], result: dict, title: str):
-    """Отправить график PNG + PDF + Markdown по результатам."""
-    from aiogram.types import BufferedInputFile
-
-    chart = generate_chart_png(items, result["stats"])
-    if chart:
-        await message.answer_photo(
-            BufferedInputFile(chart, filename="chart.png"),
-            caption=f"График: {title}",
-        )
-    pdf = generate_pdf(items, result["stats"], title)
-    if pdf:
-        await message.answer_document(
-            BufferedInputFile(pdf, filename="report.pdf"),
-            caption="Отчёт PDF",
-        )
-    md = generate_markdown(items)
-    if md:
-        await message.answer_document(
-            BufferedInputFile(md.encode("utf-8"), filename="report.md"),
-            caption="Отчёт Markdown",
-        )
