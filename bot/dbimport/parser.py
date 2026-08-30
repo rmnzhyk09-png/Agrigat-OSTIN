@@ -1,14 +1,27 @@
-"""Разбор файла БД на записи: SQLite, CSV, JSON (в т.ч. Telegram export), XLSX."""
+"""Разбор файла БД на записи: SQLite, CSV, JSON (в т.ч. Telegram export), XLSX,
+а также архивы (ZIP/RAR), текстовые файлы и .torrent раздачи."""
 import csv
 import json
 import logging
+import shutil
 import sqlite3
+import subprocess
+import tempfile
+import zipfile
 from pathlib import Path
+
+from .torrent import parse_torrent
 
 logger = logging.getLogger(__name__)
 
 # Расширения, которые бот принимает в /import
-SUPPORTED_EXTENSIONS = {".db", ".sqlite", ".sqlite3", ".csv", ".json", ".xlsx"}
+SUPPORTED_EXTENSIONS = {".db", ".sqlite", ".sqlite3", ".csv", ".json", ".xlsx",
+                        ".zip", ".rar", ".torrent", ".txt"}
+
+# Ограничения при распаковке архивов (защита от «архивных» атак)
+MAX_ARCHIVE_FILES = 400
+MAX_ARCHIVE_TOTAL = 512 * 1024 * 1024  # 512 МБ
+MAX_ARCHIVE_DEPTH = 3
 
 # Колонки, которые ищем в данных (основные русские и английские варианты)
 _TEXT_KEYS = ("text", "message", "content", "title", "description", "body",
@@ -39,13 +52,18 @@ _SKIP_HEADERS = {h.lower() for h in
 MAX_TEXT = 20000
 
 
-def parse_file(path: str | Path, filename: str = "") -> tuple[dict, list[dict]]:
+def parse_file(path: str | Path, filename: str = "", _depth: int = 0) -> tuple[dict, list[dict]]:
     """Парсит файл и возвращает (метаинформация, записи).
 
     Каждая запись — dict: {source, author, text, url, date}.
     """
     path = Path(path)
     ext = path.suffix.lower()
+    if ext in (".zip", ".rar"):
+        return _parse_archive(path, filename or path.name, _depth)
+    if ext == ".torrent":
+        parsed = parse_torrent(path, filename or path.name)
+        return parsed["meta"], parsed["records"]
     if ext in (".db", ".sqlite", ".sqlite3"):
         rows, source = _iter_sqlite(path)
         fmt = "sqlite"
@@ -58,6 +76,9 @@ def parse_file(path: str | Path, filename: str = "") -> tuple[dict, list[dict]]:
     elif ext == ".xlsx":
         rows, source = _iter_xlsx(path)
         fmt = "xlsx"
+    elif ext == ".txt":
+        rows, source = _iter_txt(path)
+        fmt = "txt"
     else:
         raise ValueError(f"Неподдерживаемый формат: {ext}. Поддерживаются: "
                          f"{', '.join(sorted(SUPPORTED_EXTENSIONS))}")
@@ -72,6 +93,9 @@ def parse_file(path: str | Path, filename: str = "") -> tuple[dict, list[dict]]:
             recs = [rec] if rec else []
         for rec in recs:
             rec["source"] = rec["source"] or (filename or path.name)
+            if fmt == "txt" and not rec.get("section"):
+                # Текстовый файл = свой мини-раздел по имени файла
+                rec["section"] = (filename or path.stem)[:255]
             records.append(rec)
 
     meta = {"format": fmt, "source": source, "filename": filename or path.name,
@@ -79,6 +103,100 @@ def parse_file(path: str | Path, filename: str = "") -> tuple[dict, list[dict]]:
     logger.info("parse %s: %s -> %s записей (columns_mode=%s)",
                 filename, fmt, len(records), columns_mode)
     return meta, records
+
+
+# ---------- архивы ----------
+
+def _safe_member(name: str) -> str:
+    """Имя члена архива без «побегов» наружу (zip-slip)."""
+    parts = [p for p in (name or "").replace("\\", "/").split("/")
+             if p and p not in (".", "..") and not p.startswith(":")]
+    return "/".join(parts)
+
+
+def _extract_zip(path: Path, target: Path):
+    total = 0
+    with zipfile.ZipFile(str(path)) as archive:
+        members = [i for i in archive.infolist() if not i.is_dir()]
+        if len(members) > MAX_ARCHIVE_FILES:
+            raise ValueError(f"В архиве больше {MAX_ARCHIVE_FILES} файлов")
+        for info in members:
+            total += info.file_size
+            if total > MAX_ARCHIVE_TOTAL:
+                raise ValueError("Архив больше 512 МБ — не разбираю")
+            fn = _safe_member(info.filename)
+            if not fn:
+                continue
+            dest = target / fn
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out, 1024 * 256)
+
+
+def _extract_rar(path: Path, target: Path):
+    # 1) rarfile + системный unrar/bsdtar
+    try:
+        import rarfile
+        with rarfile.RarFile(str(path)) as archive:
+            infos = [i for i in archive.infolist() if not i.isdir()]
+            if len(infos) > MAX_ARCHIVE_FILES:
+                raise ValueError(f"В архиве больше {MAX_ARCHIVE_FILES} файлов")
+            total = sum(i.file_size for i in infos)
+            if total > MAX_ARCHIVE_TOTAL:
+                raise ValueError("Архив больше 512 МБ — не разбираю")
+            for info in infos:
+                fn = _safe_member(info.filename)
+                if not fn:
+                    continue
+                dest = target / fn
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info) as src, open(dest, "wb") as out:
+                    shutil.copyfileobj(src, out, 1024 * 256)
+        return
+    except ValueError:
+        raise
+    except Exception as ex:
+        logger.info("rarfile: %s — пробую bsdtar", ex)
+
+    # 2) запасной путь: bsdtar (libarchive)
+    try:
+        proc = subprocess.run(["bsdtar", "-xf", str(path), "-C", str(target)],
+                              capture_output=True, timeout=120)
+    except FileNotFoundError:
+        raise ValueError(
+            "RAR: не найден распаковщик (bsdtar/unrar не установлен)") from None
+    if proc.returncode != 0:
+        raise ValueError(
+            "Не удалось распаковать RAR: возможно, файл повреждён или с паролем "
+            "(в контейнере: apt-get install libarchive-tools)")
+
+
+def _parse_archive(path: Path, filename: str, depth: int) -> tuple[dict, list[dict]]:
+    if depth >= MAX_ARCHIVE_DEPTH:
+        raise ValueError("Вложенность архивов больше 3 уровней")
+    tmp = Path(tempfile.mkdtemp(prefix="import_"))
+    try:
+        if path.suffix.lower() == ".zip":
+            _extract_zip(path, tmp)
+        else:
+            _extract_rar(path, tmp)
+
+        records: list[dict] = []
+        inner = [p for p in tmp.rglob("*") if p.is_file()]
+        for f in inner:
+            try:
+                _, recs = parse_file(f, f.name, _depth=depth + 1)
+            except (ValueError, OSError) as ex:
+                logger.info("внутренний файл %s пропущен: %s", f.name, ex)
+                continue
+            records.extend(recs)
+
+        meta = {"format": path.suffix.lower().lstrip("."), "source": path.name,
+                "filename": filename, "rows_parsed": len(inner),
+                "rows_kept": len(records)}
+        return meta, records
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _row_keymap(row: dict) -> dict[str, str]:
@@ -334,3 +452,14 @@ def _iter_xlsx(path: Path) -> tuple[list[dict], str]:
             rows.append(d)
     wb.close()
     return rows, "xlsx"
+
+
+def _iter_txt(path: Path) -> tuple[list[dict], str]:
+    """Текстовый файл: каждая непустая строка — отдельная запись."""
+    rows: list[dict] = []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append({"text": line})
+    return rows, "txt"
