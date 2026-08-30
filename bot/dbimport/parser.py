@@ -19,6 +19,23 @@ _DATE_KEYS = ("date", "datetime", "created_at", "published_at", "time", "ts",
               "date_time", "дата")
 _URL_KEYS = ("url", "link", "source_url", "permalink", "href")
 
+# Колонка с явной категорией/субъектом — её значение становится разделом
+_CATEGORY_KEYS = ("категория", "категори", "раздел", "рубрика", "тема", "темы",
+                  "группа", "группы", "тип", "направление", "отрасль", "вид",
+                  "субъект", "субъекты", "category", "categories", "subject",
+                  "subjects", "section", "sections", "group", "type", "topic")
+
+# Заголовки, которые не подходят как название раздела
+_GENERIC_HEADERS = {h.lower() for h in (
+    "text", "message", "content", "title", "description", "body", "comment",
+    "post", "tresc", "сообщение", "текст", "содержание", "описание",
+    "заголовок", "комментарий")}
+
+_META_HEADERS = ("no", "n", "id", "номер", "код", "индекс", "порядковый",
+                 "number", "index")
+_SKIP_HEADERS = {h.lower() for h in
+                 (*_DATE_KEYS, *_URL_KEYS, *_AUTHOR_KEYS, *_META_HEADERS)} | {"№", "#"}
+
 MAX_TEXT = 20000
 
 
@@ -46,26 +63,79 @@ def parse_file(path: str | Path, filename: str = "") -> tuple[dict, list[dict]]:
                          f"{', '.join(sorted(SUPPORTED_EXTENSIONS))}")
 
     records: list[dict] = []
+    columns_mode = _columns_mode(rows)
     for row in rows:
-        rec = _normalize(row, source)
-        if not rec.get("text"):
-            continue
-        rec["source"] = rec["source"] or (filename or path.name)
-        records.append(rec)
+        if columns_mode:
+            recs = _normalize_columns(row, source)
+        else:
+            rec = _normalize(row, source)
+            recs = [rec] if rec else []
+        for rec in recs:
+            rec["source"] = rec["source"] or (filename or path.name)
+            records.append(rec)
 
     meta = {"format": fmt, "source": source, "filename": filename or path.name,
             "rows_parsed": len(rows), "rows_kept": len(records)}
-    logger.info("parse %s: %s -> %s записей", filename, fmt, len(records))
+    logger.info("parse %s: %s -> %s записей (columns_mode=%s)",
+                filename, fmt, len(records), columns_mode)
     return meta, records
 
 
-def _value(row: dict, keys) -> object:
+def _row_keymap(row: dict) -> dict[str, str]:
+    """Заголовок(нижний регистр) → оригинальное имя колонки."""
+    mapping: dict[str, str] = {}
+    for key in row:
+        norm = str(key).strip()
+        low = norm.lower()
+        if low and low not in mapping:
+            mapping[low] = norm
+    return mapping
+
+
+def _find_ci(row: dict, keys) -> object:
+    """Значение колонки по имени без учёта регистра."""
+    mapping = _row_keymap(row)
     for key in keys:
-        if key in row:
-            value = row[key]
-            if value is not None and str(value).strip():
-                return value
+        orig = mapping.get(key.lower())
+        if orig is not None:
+            return row[orig]
     return None
+
+
+def _columns_mode(rows: list[dict]) -> bool:
+    """True, если колонки не «семантические» — тогда каждая колонка = раздел."""
+    if not rows:
+        return False
+    semantic = {h.lower() for h in
+                (*_TEXT_KEYS, *_CATEGORY_KEYS, *_AUTHOR_KEYS, *_DATE_KEYS, *_URL_KEYS)}
+    keys = {str(k).strip().lower() for k in rows[0].keys()}
+    return not bool(keys & semantic)
+
+
+def _normalize_columns(row: dict, default_source: str) -> list[dict]:
+    """Одна запись на колонку: раздел = название столбца."""
+    out: list[dict] = []
+    for key, val in row.items():
+        if key in ("", None):
+            continue
+        header = str(key).strip()
+        norm = header.lower()
+        if norm.startswith("col") and norm[3:].isdigit():
+            continue
+        if norm in _SKIP_HEADERS or norm in _GENERIC_HEADERS:
+            continue
+        text = _join_parts(val)
+        if not text or text.isdigit():
+            continue
+        out.append({
+            "source": str(default_source or ""),
+            "section": header[:255],
+            "author": "",
+            "text": text[:MAX_TEXT],
+            "url": "",
+            "date": "",
+        })
+    return out
 
 
 def _clean(text) -> str:
@@ -86,33 +156,81 @@ def _parse_date(value) -> str:
     return s[:50]
 
 
-def _normalize(row: dict, default_source: str) -> dict:
-    text = _value(row, _TEXT_KEYS) or ""
-    if isinstance(text, list):  # Telegram export: text бывает списком
+def _join_parts(val) -> str:
+    """Текст из списка (Telegram export: list из строк и dict)."""
+    if isinstance(val, list):
         parts = []
-        for part in text:
+        for part in val:
             if isinstance(part, dict):
                 parts.append(str(part.get("text", part.get("message", "")) or ""))
             else:
                 parts.append(str(part))
-        text = "\n".join(p for p in parts if p and p.strip())
-    text = _clean(text)
+        return " ".join(p for p in parts if p and p.strip())
+    return _clean(val)
+
+
+def _row_text_section(row: dict) -> tuple[str, str]:
+    """(текст, раздел) записи.
+
+    Раздел берётся приоритетно из явной колонки категории/субъекта.
+    Если её нет, а текст лежит в колонке с осмысленным заголовком —
+    разделом становится НАЗВАНИЕ СТОЛБЦА, где лежит текст.
+    """
+    section = ""
+    cat_val = _find_ci(row, _CATEGORY_KEYS)
+    if cat_val is not None and str(cat_val).strip():
+        section = _clean(str(cat_val))[:255]
+
+    # 1) известная текстовая колонка
+    keymap = _row_keymap(row)
+    for key in _TEXT_KEYS:
+        orig = keymap.get(key.lower())
+        if orig is None:
+            continue
+        val = _join_parts(row[orig])
+        if val:
+            return val, section
+
+    # 2) fallback: любой непустой столбец, заголовок → раздел
+    best_key, best = None, None
+    for key, val in row.items():
+        norm_key = str(key).strip().lower()
+        if key in ("", None) or (norm_key.startswith("col") and norm_key[3:].isdigit()):
+            continue
+        if norm_key in _SKIP_HEADERS:
+            continue
+        sval = _join_parts(val)
+        if not sval or sval.isdigit():
+            continue
+        if best is None or len(sval) > len(best):
+            best, best_key = sval, key
+
+    if best:
+        if not section and str(best_key).strip().lower() not in _GENERIC_HEADERS:
+            section = str(best_key).strip()[:255]
+        return best, section
+    return "", section
+
+
+def _normalize(row: dict, default_source: str) -> dict:
+    text, section = _row_text_section(row)
     if not text:
         return {}
 
-    author = _value(row, _AUTHOR_KEYS)
+    author = _find_ci(row, _AUTHOR_KEYS)
     if isinstance(author, dict):  # Telegram export: from = {"id":..., "name":...}
         author = author.get("name") or author.get("username") or ""
-    url = _value(row, _URL_KEYS)
+    url = _find_ci(row, _URL_KEYS)
     if isinstance(url, list):
         url = ", ".join(str(u) for u in url if u)
 
     return {
         "source": str(default_source or ""),
+        "section": section or "",
         "author": _clean(str(author or "")),
         "text": text[:MAX_TEXT],
         "url": _clean(str(url or "")),
-        "date": _parse_date(_value(row, _DATE_KEYS)),
+        "date": _parse_date(_find_ci(row, _DATE_KEYS)),
     }
 
 

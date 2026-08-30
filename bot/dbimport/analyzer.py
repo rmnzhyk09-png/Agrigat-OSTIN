@@ -133,10 +133,15 @@ def get_tagger() -> CategoryTagger:
 
 
 def analyze_records(records: list[dict]) -> list[dict]:
-    """Проставляет каждому record['section'] — категория/раздел."""
+    """Проставляет каждому record['section'] — категория/раздел.
+
+    Если раздел уже задан парсером (название столбца или колонка
+    «Категория/Субъект») — оставляем его. Иначе классифицируем по тексту.
+    """
     tagger = get_tagger()
     for rec in records:
-        rec["section"] = tagger.tag(rec.get("text", ""))
+        if not rec.get("section"):
+            rec["section"] = tagger.tag(rec.get("text", ""))
     return records
 
 
