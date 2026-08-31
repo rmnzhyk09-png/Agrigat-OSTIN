@@ -69,6 +69,12 @@ class Settings:
         self.supabase_project_ref = os.getenv("SUPABASE_PROJECT_REF", "").strip()
         self.supabase_pat = os.getenv("SUPABASE_ACCESS_TOKEN", "").strip()
 
+        # Supabase Storage: бакет для сохранения загруженных файлов (/import_url).
+        # Публичный бакет даёт прямую ссылку на файл для просмотра в админке.
+        self.supabase_bucket = os.getenv("SUPABASE_BUCKET", "imports").strip()
+        self.supabase_bucket_public = os.getenv("SUPABASE_BUCKET_PUBLIC",
+                                                "true").lower() == "true"
+
         # Blackbird — OSINT поиск по никнейму/email (готовый инструмент p1ngul1n0/blackbird)
         # Путь к папке blackbird (там лежит blackbird.py). Пусто = не подключён.
         self.blackbird_dir = os.getenv("BLACKBIRD_DIR", "").strip()

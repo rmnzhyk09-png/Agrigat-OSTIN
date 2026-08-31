@@ -162,6 +162,79 @@ class SupabaseStore:
         return inserted, skipped
 
 
+    # ---------- Supabase Storage (хранение загруженных файлов) ----------
+
+    @property
+    def storage_base(self) -> str:
+        return settings.supabase_url.rstrip("/") + "/storage/v1"
+
+    @staticmethod
+    def _storage_headers(*, upload: bool = False):
+        h = {
+            "apikey": settings.supabase_service_key,
+            "Authorization": f"Bearer {settings.supabase_service_key}",
+        }
+        if upload:
+            h["Content-Type"] = "application/octet-stream"
+        return h
+
+    async def _ensure_bucket(self) -> bool:
+        """Создаёт бакет для файлов (через Management API), если задан PAT+ref.
+
+        Если ключей менеджмента нет — считаем, что бакет уже создан вручную.
+        """
+        if not (self.pat and self.ref):
+            return True
+        url = f"https://api.supabase.com/v1/projects/{self.ref}/storage/buckets"
+        auth = {"Authorization": f"Bearer {self.pat}"}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(url, headers=auth)
+                names = {b.get("name") for b in r.json()} if r.status_code < 400 else set()
+                if settings.supabase_bucket not in names:
+                    r2 = await client.post(url, headers=auth,
+                                           json={"id": settings.supabase_bucket,
+                                                 "name": settings.supabase_bucket,
+                                                 "public": settings.supabase_bucket_public,
+                                                 "file_size_limit": None,
+                                                 "allowed_mime_types": None})
+                    if r2.status_code >= 400:
+                        logger.warning("supabase: создать бакет %s: %s",
+                                       settings.supabase_bucket, r2.text[:200])
+                        return False
+        except httpx.HTTPError as ex:
+            logger.warning("supabase storage (bucket): %s", ex)
+            return False
+        return True
+
+    async def upload_file(self, path: Path, remote_name: str) -> str:
+        """Загружает файл в Supabase Storage. Возвращает URL (публичный).
+
+        Если бакет приватный — вернёт путь внутри бакета (object path).
+        """
+        try:
+            return await self._upload_file(path, remote_name)
+        except (httpx.HTTPError, OSError) as ex:
+            logger.warning("supabase upload %s: %s", remote_name, ex)
+            return ""
+
+    async def _upload_file(self, path: Path, remote_name: str) -> str:
+        await self._ensure_bucket()
+        data = path.read_bytes()
+        obj_url = f"{self.storage_base}/object/{settings.supabase_bucket}/{remote_name}"
+        async with httpx.AsyncClient(timeout=300,
+                                     headers=self._storage_headers(upload=True)) as client:
+            r = await client.post(obj_url, params={"upsert": "true"}, content=data)
+            if r.status_code >= 400:
+                logger.warning("supabase upload status=%s %s",
+                               r.status_code, r.text[:200])
+                return ""
+        if settings.supabase_bucket_public:
+            return (f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/"
+                    f"{settings.supabase_bucket}/{remote_name}")
+        return f"{settings.supabase_bucket}/{remote_name}"
+
+
 # ---------- проверка при старте ----------
 
 async def check_supabase() -> tuple[bool, str]:
@@ -340,7 +413,8 @@ def _extract_and_save_profiles(records: list[dict], import_id: int,
                     prof["completeness_score"] = str(score)
                     prof["overall_confidence"] = conf
                     prof["import_ids"] = [import_id]
-                    prof["raw_profile"] = prof
+                    # снимок без self-ссылки (иначе JSON-сериализация падает)
+                    prof["raw_profile"] = {k: v for k, v in prof.items()}
                     if filename:
                         prof["source_files"] = [filename]
 
