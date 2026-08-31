@@ -6,6 +6,7 @@ PLATFORM_NAMES = {
     "x": "X", "youtube": "YouTube", "rss": "RSS", "web": "Веб",
     "google": "Google", "serpapi": "SerpAPI", "brave": "Brave",
     "db": "База импорта",
+    "profile": "Профиль человека",
 }
 
 

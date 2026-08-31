@@ -15,6 +15,7 @@ PLATFORM_NAMES = {
     "mastodon": "Mastodon", "hackernews": "HackerNews", "vk": "VK",
     "x": "X/Twitter", "youtube": "YouTube", "rss": "RSS", "web": "Веб",
     "google": "Google", "serpapi": "SerpAPI", "brave": "Brave",
+    "db": "База импорта", "profile": "Профиль",
 }
 
 SENT_COLORS = {"positive": "#2ca02c", "neutral": "#bbbbbb", "negative": "#d62728"}

@@ -6,7 +6,7 @@ from typing import Optional
 from .collectors import collect_all, get_collector, scraper
 from .analysis import classify_items, analyze_sentiment
 from .reporting import generate_summary
-from .dbimport.query import search_imported
+from .dbimport.query import search_imported, search_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,14 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
                 items.append(it)
         if db_items:
             logger.info("db search: +%s записей из импортированной БД", len(items))
+
+        # Добавляем полные карточки профилей (ФИО/телефон/email/ИНН)
+        profile_items = await search_profiles(nickname, limit=5)
+        for it in profile_items:
+            key = f"profile:{it.get('id')}"
+            if key not in seen:
+                seen.add(key)
+                items.append(it)
     except Exception as ex:
         logger.warning("поиск по импортированной БД: %s", ex)
 

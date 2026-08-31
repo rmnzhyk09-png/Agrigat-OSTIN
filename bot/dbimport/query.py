@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..db.database import SyncSessionLocal
-from ..db.models import DbRecord
+from ..db.models import DbProfile, DbRecord
 from .store import SupabaseStore
 
 logger = logging.getLogger(__name__)
@@ -110,3 +110,134 @@ async def search_imported(query: str, mode: str = "query", limit: int = 20) -> l
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase search fallback to local: %s", ex)
     return await asyncio.to_thread(_search_local, query, mode, limit)
+
+
+# ---------- поиск профилей ----------
+
+def _search_profiles_local(query: str, limit: int = 5) -> list[dict]:
+    """Ищет профили (db_profiles) по ФИО / телефону / email / ИНН."""
+    q = (query or "").strip()
+    if not q:
+        return []
+    qlower = q.lower()
+    digits = "".join(c for c in q if c.isdigit())
+
+    out: list[dict] = []
+    with SyncSessionLocal() as session:
+        # По ФИО (частично)
+        try:
+            name_rows = session.query(DbProfile).filter(
+                DbProfile.full_name.ilike(f"%{q}%")
+            ).limit(limit).all()
+            out.extend(name_rows)
+        except Exception as ex:
+            logger.debug("profile name search: %s", ex)
+
+        # По телефону / email / ИНН
+        extra_rows: list[DbProfile] = []
+        if digits:
+            extra_rows += session.query(DbProfile).filter(
+                DbProfile.phones.contains(digits)
+            ).limit(limit).all()
+        if "@" in q:
+            extra_rows += session.query(DbProfile).filter(
+                DbProfile.emails.contains(qlower)
+            ).limit(limit).all()
+        if q.isdigit() and len(q) in (10, 12):
+            extra_rows += session.query(DbProfile).filter(
+                DbProfile.inn == q
+            ).limit(limit).all()
+
+    ids = {p.id for p in out}
+    for p in extra_rows:
+        if p.id not in ids:
+            ids.add(p.id)
+            out.append(p)
+    if len(out) > limit:
+        out = out[:limit]
+
+    result: list[dict] = []
+    for p in out:
+        result.append(_profile_row_to_item(p))
+    return result
+
+
+def _profile_row_to_item(p: DbProfile) -> dict:
+    """Превращает строку DbProfile в запись-находку с полной карточкой."""
+    phones = p.phones if isinstance(p.phones, list) else []
+    emails = p.emails if isinstance(p.emails, list) else []
+
+    url = p.vk_url or p.telegram.get("url") if isinstance(p.telegram, dict) else p.vk_url
+    text_parts = []
+    if p.full_name:
+        text_parts.append(f"ФИО: {p.full_name}")
+    if p.date_of_birth:
+        text_parts.append(f"Дата рождения: {p.date_of_birth}")
+    for ph in phones:
+        text_parts.append(f"Телефон: {ph}")
+    for e in emails:
+        text_parts.append(f"Email: {e}")
+    if p.registration_address:
+        text_parts.append(f"Адрес: {p.registration_address}")
+    if p.inn:
+        text_parts.append(f"ИНН: {p.inn}")
+    if p.snils:
+        text_parts.append(f"СНИЛС: {p.snils}")
+    if p.passport_series and p.passport_number:
+        text_parts.append(f"Паспорт: {p.passport_series} {p.passport_number}")
+    if p.vehicles:
+        vehicles = p.vehicles if isinstance(p.vehicles, list) else []
+        for v in vehicles[:5]:
+            if isinstance(v, dict):
+                plate = v.get("plate", "")
+                make = v.get("make", "")
+                text_parts.append(f"Авто: {make} {plate}".strip())
+    if p.court_cases_count:
+        text_parts.append(f"Судебных дел: {p.court_cases_count}")
+    if p.enforcement_debt_total:
+        text_parts.append(f"Долги приставам: {p.enforcement_debt_total} руб.")
+    if p.criminal_record:
+        text_parts.append("Судимость: есть")
+    if p.bankruptcy_status:
+        text_parts.append(f"Банкротство: {p.bankruptcy_status}")
+    if p.exit_ban:
+        text_parts.append("Ограничение на выезд: да")
+    if p.current_employer:
+        text_parts.append(f"Работа: {p.current_employer}")
+    if p.businesses:
+        biz = p.businesses if isinstance(p.businesses, list) else []
+        for b in biz[:5]:
+            if isinstance(b, dict):
+                text_parts.append(f"Бизнес: {b.get('name', '')} ({b.get('role', '')})")
+
+    text = "\n".join(text_parts)
+    return {
+        "id": f"profile:{p.id}",
+        "post_id": f"profile:{p.id}",
+        "platform": "profile",
+        "author": p.full_name or "",
+        "url": url or "",
+        "text": text,
+        "published_at": p.date_of_birth or "",
+        "score": 1.0 if p.full_name else 0.8,
+        "profile": {
+            "full_name": p.full_name,
+            "phones": phones,
+            "emails": emails,
+            "telegram": p.telegram,
+            "vk_url": p.vk_url,
+            "instagram_url": p.instagram_url,
+            "registration_address": p.registration_address,
+            "inn": p.inn,
+            "snils": p.snils,
+            "confidence": p.overall_confidence,
+            "completeness": p.completeness_score,
+        },
+    }
+
+
+async def search_profiles(query: str, limit: int = 5) -> list[dict]:
+    """Профили людей из db_profiles по запросу (ФИО/телефон/email/ИНН)."""
+    if not (query or "").strip():
+        return []
+    return await asyncio.to_thread(_search_profiles_local, query, limit)
