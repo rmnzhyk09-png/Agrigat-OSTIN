@@ -16,9 +16,10 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..db.database import SyncSessionLocal, sync_engine
-from ..db.models import Base, DbImport, DbRecord, DbSection
+from ..db.models import Base, DbImport, DbProfile, DbRecord, DbSection
 from .analyzer import analyze_records, count_sections
 from .parser import parse_file
+from .profiles import build_profile_from_record, completeness_score, confidence_level, merge_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,163 @@ def _mirror_local(meta: dict, records: list[dict], sections_found: int,
         return import_id, len(fresh), skipped
 
 
+# ---------- профили ----------
+
+def _extract_and_save_profiles(records: list[dict], import_id: int,
+                                filename: str = "") -> int:
+    """Извлекает профили из записей и сохраняет/обновляет в db_profiles.
+
+    Возвращает количество созданных/обновлённых профилей.
+    """
+    if not records:
+        return 0
+
+    profiles: list[dict] = []
+    for rec in records:
+        p = build_profile_from_record(rec, filename)
+        if p.get("full_name") or p.get("phones"):
+            profiles.append(p)
+
+    if not profiles:
+        return 0
+
+    # Группируем по ФИО (lowercase) для объединения записей об одном человеке
+    by_name: dict[str, list[dict]] = {}
+    unnamed: list[dict] = []
+    for p in profiles:
+        name = (p.get("full_name") or "").strip().lower()
+        if name:
+            by_name.setdefault(name, []).append(p)
+        else:
+            unnamed.append(p)
+
+    merged: list[dict] = []
+    for name, group in by_name.items():
+        m = merge_profiles(group)
+        merged.append(m)
+    for p in unnamed:
+        merged.append(p)
+
+    saved = 0
+    try:
+        with SyncSessionLocal() as session:
+            Base.metadata.create_all(sync_engine)
+            for prof in merged:
+                name = (prof.get("full_name") or "").strip()
+                phones = prof.get("phones") or []
+                existing = None
+
+                # Ищем существующий профиль по ФИО или телефону
+                if name:
+                    existing = session.query(DbProfile).filter(
+                        DbProfile.full_name == name
+                    ).first()
+                if not existing and phones:
+                    for p in phones:
+                        existing = session.query(DbProfile).filter(
+                            DbProfile.phones.contains(p)
+                        ).first()
+                        if existing:
+                            break
+
+                score = completeness_score(prof)
+                conf = confidence_level(score)
+
+                if existing:
+                    # Обновляем существующий профиль
+                    for k, v in prof.items():
+                        if k in ("source_files", "import_ids"):
+                            old = getattr(existing, k) or []
+                            if isinstance(old, list) and isinstance(v, list):
+                                setattr(existing, k, old + v)
+                            elif isinstance(v, list):
+                                setattr(existing, k, v)
+                        elif k == "phones" or k == "emails":
+                            old = getattr(existing, k) or []
+                            if isinstance(old, list) and isinstance(v, list):
+                                setattr(existing, k, list(set(old + v)))
+                            elif isinstance(v, list):
+                                setattr(existing, k, v)
+                        elif not getattr(existing, k):
+                            setattr(existing, k, v)
+                    existing.completeness_score = str(score)
+                    existing.overall_confidence = conf
+                    existing.raw_profile = prof
+                    existing.updated_at = __import__("datetime").datetime.utcnow()
+                else:
+                    # Создаём новый профиль
+                    prof["completeness_score"] = str(score)
+                    prof["overall_confidence"] = conf
+                    prof["import_ids"] = [import_id]
+                    prof["raw_profile"] = prof
+                    if filename:
+                        prof["source_files"] = [filename]
+
+                    row = DbProfile(
+                        full_name=prof.get("full_name"),
+                        surname=prof.get("surname"),
+                        first_name=prof.get("first_name"),
+                        patronymic=prof.get("patronymic"),
+                        maiden_name=prof.get("maiden_name"),
+                        gender=prof.get("gender"),
+                        date_of_birth=prof.get("date_of_birth"),
+                        age=prof.get("age"),
+                        citizenship=prof.get("citizenship"),
+                        place_of_birth=prof.get("place_of_birth"),
+                        passport_series=prof.get("passport_series"),
+                        passport_number=prof.get("passport_number"),
+                        passport_issued_by=prof.get("passport_issued_by"),
+                        passport_issue_date=prof.get("passport_issue_date"),
+                        inn=prof.get("inn"),
+                        snils=prof.get("snils"),
+                        driver_license=prof.get("driver_license"),
+                        military_id=prof.get("military_id"),
+                        registration_address=prof.get("registration_address"),
+                        registration_postal_code=prof.get("registration_postal_code"),
+                        actual_address=prof.get("actual_address"),
+                        phones=prof.get("phones"),
+                        emails=prof.get("emails"),
+                        telegram=prof.get("telegram"),
+                        social_handles=prof.get("social_handles"),
+                        family_status=prof.get("family_status"),
+                        relatives=prof.get("relatives"),
+                        business_partners=prof.get("business_partners"),
+                        vk_url=prof.get("vk_url"),
+                        instagram_url=prof.get("instagram_url"),
+                        facebook_url=prof.get("facebook_url"),
+                        real_estate=prof.get("real_estate"),
+                        vehicles=prof.get("vehicles"),
+                        driver_license_status=prof.get("driver_license_status"),
+                        court_cases=prof.get("court_cases"),
+                        court_cases_count=len(prof.get("court_cases") or []),
+                        court_debt_total=prof.get("court_debt_total"),
+                        enforcement_proceedings=prof.get("enforcement_proceedings"),
+                        enforcement_debt_total=prof.get("enforcement_debt_total"),
+                        criminal_record=prof.get("criminal_record", False),
+                        tax_debt_total=prof.get("tax_debt_total"),
+                        bankruptcy_status=prof.get("bankruptcy_status"),
+                        account_arrests=prof.get("account_arrests"),
+                        current_employer=prof.get("current_employer"),
+                        employer_inn=prof.get("employer_inn"),
+                        position=prof.get("position"),
+                        businesses=prof.get("businesses"),
+                        exit_ban=prof.get("exit_ban", False),
+                        disqualified=prof.get("disqualified", False),
+                        efrsb_status=prof.get("efrsb_status"),
+                        source_files=prof.get("source_files"),
+                        import_ids=prof.get("import_ids"),
+                        overall_confidence=conf,
+                        completeness_score=str(score),
+                        raw_profile=prof,
+                    )
+                    session.add(row)
+                saved += 1
+            session.commit()
+    except Exception:
+        logger.exception("profile save error")
+    return saved
+
+
 # ---------- точка входа ----------
 
 async def import_database_file(path, filename: str = "") -> dict:
@@ -305,10 +463,16 @@ async def import_database_file(path, filename: str = "") -> dict:
 
     # Зеркало в собственную БД всегда (для резюме и офлайн-реестра).
     # В него тоже попадают только новые записи; дубли пропускаются.
+    profiles_saved = 0
+    local_import_id = 0
     try:
         if fresh:
-            await asyncio.to_thread(_mirror_local, meta, fresh,
-                                    len(sections), len(new_sections))
+            local_import_id, _added, _skipped = await asyncio.to_thread(
+                _mirror_local, meta, fresh, len(sections), len(new_sections))
+            # Извлекаем профили из записей
+            profiles_saved = await asyncio.to_thread(
+                _extract_and_save_profiles, fresh, local_import_id, filename,
+            )
     except Exception:
         logger.exception("local mirror error")
 
@@ -321,4 +485,5 @@ async def import_database_file(path, filename: str = "") -> dict:
         "new_sections": new_sections,
         "remote_note": remote_note,
         "supabase_configured": sb.enabled,
+        "profiles_created": profiles_saved,
     }
