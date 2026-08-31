@@ -34,6 +34,10 @@ HELP_TEXT = (
     "SHA1 (info_hash) и magnet-ссылка\n\n"
     "<b>Защита от дублей:</b> если запись с такими данными уже есть в базе, "
     "она пропускается; база дополняется только новыми записями.\n\n"
+    "<b>Умный разбор:</b> если в таблице распознаются ФИО, телефоны или email, "
+    "файл автоматически разбирается на «карточки» с полями, и эти контакты "
+    "находятся обычным поиском. Раскладка (колонки-поля или «поле: значение» "
+    "блоками) и типы полей определяются самим ботом.\n\n"
     "<b>Формат данных в файле:</b>\n"
     "• текст записи — колонка <code>text / message / content</code>\n"
     "• автор — <code>author / from / user</code>\n"
@@ -103,6 +107,16 @@ async def on_document(message: Message, bot: Bot):
         f"Записей в файле: <b>{result.get('total', 0)}</b>",
         f"🆕 Добавлено новых: <b>{result.get('added', 0)}</b>",
     ]
+    contacts = result.get("contacts") or {}
+    if contacts.get("names") or contacts.get("phones") or contacts.get("emails"):
+        lines.append(
+            "👤 ФИО: <b>{names}</b> · 📞 телефонов: <b>{phones}</b> · "
+            "✉️ email: <b>{emails}</b>".format(
+                names=contacts.get("names", 0),
+                phones=contacts.get("phones", 0),
+                emails=contacts.get("emails", 0),
+            )
+        )
     dupes = result.get("duplicates", 0)
     if dupes:
         lines.append(f"♻️ Дубликатов пропущено: <b>{dupes}</b>")

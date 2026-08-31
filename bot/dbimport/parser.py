@@ -11,6 +11,14 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from .schema import (
+    detect_vertical_matrix,
+    has_contact_columns,
+    horizontal_records,
+    split_txt_records,
+    summarize_contacts,
+    vertical_matrix_records,
+)
 from .torrent import parse_torrent
 
 logger = logging.getLogger(__name__)
@@ -89,24 +97,43 @@ def parse_file(path: str | Path, filename: str = "", _depth: int = 0) -> tuple[d
                          f"{', '.join(sorted(SUPPORTED_EXTENSIONS))}")
 
     records: list[dict] = []
-    columns_mode = _columns_mode(rows)
-    for row in rows:
-        if columns_mode:
-            recs = _normalize_columns(row, source)
+
+    if fmt == "txt":
+        lines = [str(r.get("text", "")) for r in rows]
+        smart = split_txt_records(lines)
+        if smart is not None:
+            records = smart
         else:
-            rec = _normalize(row, source)
-            recs = [rec] if rec else []
-        for rec in recs:
-            rec["source"] = rec["source"] or (filename or path.name)
-            if fmt == "txt" and not rec.get("section"):
-                # Текстовый файл = свой мини-раздел по имени файла
-                rec["section"] = (filename or path.stem)[:255]
-            records.append(rec)
+            records = [{"text": ln} for ln in lines if ln.strip()]
+    elif rows and isinstance(rows[0], dict) and has_contact_columns(rows[0].keys()):
+        records = horizontal_records(rows, source)
+    elif rows and isinstance(rows[0], dict) and detect_vertical_matrix(rows):
+        records = vertical_matrix_records(rows, source)
+
+    if not records and rows and isinstance(rows[0], dict):
+        columns_mode = _columns_mode(rows)
+        for row in rows:
+            if columns_mode:
+                recs = _normalize_columns(row, source)
+            else:
+                rec = _normalize(row, source)
+                recs = [rec] if rec else []
+            for rec in recs:
+                rec["source"] = rec["source"] or (filename or path.name)
+                if fmt == "txt" and not rec.get("section"):
+                    rec["section"] = (filename or path.stem)[:255]
+                records.append(rec)
+
+    for rec in records:
+        rec["source"] = rec.get("source") or (filename or path.name)
+        if fmt == "txt" and not rec.get("section"):
+            rec["section"] = (filename or path.stem)[:255]
 
     meta = {"format": fmt, "source": source, "filename": filename or path.name,
             "rows_parsed": len(rows), "rows_kept": len(records)}
-    logger.info("parse %s: %s -> %s записей (columns_mode=%s)",
-                filename, fmt, len(records), columns_mode)
+    meta["contacts"] = summarize_contacts(records)
+    logger.info("parse %s: %s -> %s записей (contacts=%s)",
+                filename, fmt, len(records), meta["contacts"])
     return meta, records
 
 
