@@ -72,6 +72,9 @@ class Settings:
         # Blackbird — OSINT поиск по никнейму/email (готовый инструмент p1ngul1n0/blackbird)
         # Путь к папке blackbird (там лежит blackbird.py). Пусто = не подключён.
         self.blackbird_dir = os.getenv("BLACKBIRD_DIR", "").strip()
+        # Python Blackbird (желательно отдельный venv, чтобы не конфликтовали зависимости).
+        # Пусто = системный/проектный python.
+        self.blackbird_python = os.getenv("BLACKBIRD_PYTHON", "").strip()
         # Максимальное время (сек) на один поиск Blackbird
         self.blackbird_timeout = int(os.getenv("BLACKBIRD_TIMEOUT", "120"))
 

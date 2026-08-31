@@ -57,13 +57,24 @@ def _latest_json_for(identifier: str) -> Path | None:
 
 def _run_blackbird(identifier: str, as_email: bool) -> int:
     """Запускает blackbird.py и возвращает returncode (0 = ок)."""
-    py = sys.executable or "python"
+    # Предпочитаем отдельный python Blackbird (venv) — он не конфликтует
+    # с зависимостями бота. Пусто = текущий python.
+    py = settings.blackbird_python or sys.executable
     cmd = [py, "blackbird.py"]
     if as_email:
         cmd += ["--email", identifier]
     else:
         cmd += ["--username", identifier]
-    cmd += ["--json", "--no-update"]
+    cmd += ["--json"]
+    # Список WhatsMyName приходит с Blackbird только после первой загрузки
+    # (data/wmn-data.json). Если его ещё нет — не ставим --no-update, и
+    # Blackbird сам скачает список. Когда список уже есть — работаем офлайн.
+    list_path = Path(settings.blackbird_dir) / "data"
+    username_list = list_path / "wmn-data.json"
+    email_list = list_path / "email-data.json"
+    has_list = (username_list.is_file() if not as_email else email_list.is_file())
+    if has_list:
+        cmd += ["--no-update"]
     if FILTER:
         cmd += ["--filter", FILTER]
     try:
