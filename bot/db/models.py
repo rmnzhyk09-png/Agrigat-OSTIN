@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Boolean, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -243,3 +243,23 @@ class DbProfile(Base):
     raw_profile = Column(JSON)     # полный словарь для карточки
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ---------- Персистентный кэш результатов поиска (для меню формата) ----------
+
+class FormatResult(Base):
+    """Результат поиска, ожидающий сохранения в выбранном формате.
+
+    Хранится в БД, чтобы переживать перезапуск бота (иначе после рестарта
+    пользователь получал бы «Результат устарел»).
+    """
+    __tablename__ = "format_results"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, index=True)
+    chat_id = Column(BigInteger)
+    title = Column(String(500))
+    items = Column(JSON)           # все находки
+    stats = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+

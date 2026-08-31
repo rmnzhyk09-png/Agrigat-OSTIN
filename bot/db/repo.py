@@ -1,12 +1,12 @@
 """Запись в БД: пользователи, история, задачи, отчёты."""
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from .database import AsyncSessionLocal
-from .models import Job, Monitor, Report, SearchHistory, User, Watch
+from .models import Job, Monitor, Report, SearchHistory, User, Watch, FormatResult
 
 logger = logging.getLogger(__name__)
 
@@ -152,3 +152,53 @@ async def get_active_subscriptions() -> list[tuple[int, list[str]]]:
             if mon and mon.tags:
                 result.append((user.user_id, mon.tags))
         return result
+
+
+# ---------- Персистентный кэш результатов (меню выбора формата) ----------
+
+async def save_format_result(user_id: int, chat_id: int, title: str,
+                             items: list, stats: dict, ttl_seconds: int = 1800) -> None:
+    """Сохранить результат поиска в БД (переживает перезапуск бота)."""
+    cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
+    async with AsyncSessionLocal() as session:
+        # чистим старые записи этого пользователя
+        res = await session.execute(
+            select(FormatResult).where(
+                FormatResult.user_id == user_id,
+                FormatResult.created_at < cutoff,
+            ))
+        for row in res.scalars().all():
+            await session.delete(row)
+        session.add(FormatResult(user_id=user_id, chat_id=chat_id,
+                                 title=title[:500],
+                                 items=items, stats=stats))
+        await session.commit()
+
+
+async def load_format_result(user_id: int, ttl_seconds: int = 1800):
+    """Загрузить последний результат поиска пользователя (или None)."""
+    cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
+    async with AsyncSessionLocal() as session:
+        # удаляем устаревшие
+        res = await session.execute(
+            select(FormatResult).where(FormatResult.created_at < cutoff))
+        for row in res.scalars().all():
+            await session.delete(row)
+        await session.commit()
+        res = await session.execute(
+            select(FormatResult).filter_by(user_id=user_id)
+            .order_by(FormatResult.id.desc()).limit(1))
+        row = res.scalar_one_or_none()
+        if not row:
+            return None
+        return row.title, row.items, row.stats
+
+
+async def clear_format_result(user_id: int) -> None:
+    """Удалить кэш результата (кнопка «не сохранять»)."""
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(FormatResult).filter_by(user_id=user_id))
+        for row in res.scalars().all():
+            await session.delete(row)
+        await session.commit()

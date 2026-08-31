@@ -3,9 +3,11 @@
 Вместо спама всеми файлами бот показывает сводку «что найдено» и даёт
 кнопки: JSON / CSV / Markdown / PDF / График PNG. Файлы отправляются
 только после выбора формата.
+
+Результаты хранятся в собственной БД бота (таблица format_results),
+поэтому выбранный формат не «устаревает» после перезапуска бота на Render.
 """
 import logging
-import time
 
 from aiogram import Router, F
 from aiogram.types import (
@@ -19,12 +21,12 @@ from ..reporting import generate_json, generate_csv, generate_markdown
 from ..reporting.charts import generate_chart_png
 from ..reporting.pdf import generate_pdf
 from ..reporting.summary import PLATFORM_NAMES
+from ..db import repo
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 _TTL = 30 * 60       # результаты живут полчаса
-_MAX = 300           # максимум закэшированных пользователей
 _PAGE = 15           # находок на одной странице списка
 
 _FORMAT_ROWS = [
@@ -38,27 +40,22 @@ _FORMAT_ROWS = [
 _FMT_CHOICES = {"fmt:json", "fmt:csv", "fmt:md", "fmt:markdown",
                 "fmt:pdf", "fmt:png", "fmt:close"}
 
-# Результаты, ожидающие выбора формата: user_id -> (ts, title, items, stats)
-_LAST: dict[int, tuple[float, str, list, dict]] = {}
+
+async def _store(user_id: int, chat_id: int, title: str,
+                 items: list[dict], stats: dict):
+    try:
+        await repo.save_format_result(user_id, chat_id, title, items, stats,
+                                      ttl_seconds=_TTL)
+    except Exception as ex:
+        logger.warning("не сохранить результат в БД: %s", ex)
 
 
-def _store(user_id: int, title: str, items: list[dict], stats: dict):
-    if len(_LAST) > _MAX:
-        now = time.time()
-        for uid in [k for k, (ts, *_) in _LAST.items() if now - ts > _TTL]:
-            _LAST.pop(uid, None)
-    _LAST[user_id] = (time.time(), title, items, stats)
-
-
-def _load(user_id: int):
-    entry = _LAST.get(user_id)
-    if not entry:
+async def _load(user_id: int):
+    try:
+        return await repo.load_format_result(user_id, ttl_seconds=_TTL)
+    except Exception as ex:
+        logger.warning("не загрузить результат: %s", ex)
         return None
-    ts, title, items, stats = entry
-    if time.time() - ts > _TTL:
-        _LAST.pop(user_id, None)
-        return None
-    return title, items, stats
 
 
 def _esc(text) -> str:
@@ -78,7 +75,7 @@ async def send_findings(message: Message, title: str,
                         items: list[dict], result: dict):
     """Сводка найденного + клавиатура выбора формата сохранения."""
     stats = result.get("stats", {})
-    _store(message.from_user.id, title, items, stats)
+    await _store(message.from_user.id, message.chat.id, title, items, stats)
 
     if not items:
         await message.answer(f"🕵️ <b>{_esc(title)}</b>\n\nНайдено: <b>0</b> совпадений")
@@ -205,7 +202,10 @@ async def process_format(callback: CallbackQuery):
     title, items, stats = entry
 
     if choice == "close":
-        _LAST.pop(callback.from_user.id, None)
+        try:
+            await repo.clear_format_result(callback.from_user.id)
+        except Exception as ex:
+            logger.debug("clear format: %s", ex)
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:

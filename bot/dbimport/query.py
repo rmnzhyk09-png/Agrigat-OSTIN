@@ -33,6 +33,45 @@ def _sanitize(value: str) -> str:
     return re.sub(r"[*%_(),;()\\]", " ", (value or "")).strip()
 
 
+# Синонимы полей -> канонический ключ поиска
+FIELD_ALIASES = {
+    "имя": "name", "фио": "name", "фам": "name", "фамилия": "name",
+    "name": "name", "иван": "name",
+    "тел": "phone", "телефон": "phone", "номер": "phone", "т": "phone",
+    "phone": "phone",
+    "инн": "inn", "иин": "inn",
+    "паспорт": "passport", "пасп": "passport", "паспорту": "passport",
+    "снилс": "snils", "снилы": "snils",
+    "почта": "email", "мэйл": "email", "mail": "email", "email": "email",
+    "авто": "auto", "автомобиль": "auto", "госномер": "auto",
+    "машина": "auto", "номер авто": "auto",
+}
+
+_FIELD_RE = re.compile(
+    r"^\s*(?P<field>[а-яёa-z0-9]+)\s*[:=]\s*(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_search_field(query: str):
+    """Разбирает запрос вида 'телефон: 9001234567' или 'инн=7701234567'.
+
+    Возвращает кортеж (field, value):
+      field: name/phone/email/inn/passport/snils/auto или "" (автоопределение)
+      value: само значение без префикса
+    """
+    text = (query or "").strip()
+    if not text:
+        return "", text
+    m = _FIELD_RE.match(text)
+    if m:
+        key = m.group("field").strip().lower()
+        if key in FIELD_ALIASES:
+            return FIELD_ALIASES[key], m.group("value").strip()
+    return "", text
+
+
+
 def _to_item(row: dict) -> dict:
     return {
         "id": row.get("checksum") or row.get("id"),
@@ -48,13 +87,20 @@ def _to_item(row: dict) -> dict:
 
 # ---------- Supabase ----------
 
-async def _search_supabase(query: str, mode: str, limit: int) -> list[dict]:
+async def _search_supabase(query: str, mode: str, limit: int,
+                           field: str = "") -> list[dict]:
     sb = SupabaseStore()
     q = _sanitize(query)
     if not (sb.enabled and q):
         return []
 
-    if mode == "account":
+    if field == "phone":
+        joined = f"text.ilike.*{q}*"
+    elif field == "name":
+        joined = f"author.ilike.*{q}*"
+    elif field in ("email", "inn", "passport", "auto"):
+        joined = f"text.ilike.*{q}*"
+    elif mode == "account":
         joined = f"author.ilike.*{q}*"
     else:
         joined = f"(section.ilike.*{q}*,text.ilike.*{q}*,source.ilike.*{q}*)"
@@ -69,7 +115,29 @@ async def _search_supabase(query: str, mode: str, limit: int) -> list[dict]:
 
 # ---------- локальное зеркало ----------
 
-def _search_local(query: str, mode: str, limit: int) -> list[dict]:
+def _haystack_for(r, field: str) -> str:
+    """Поле записи, по которому ищем (в зависимости от выбранного тега)."""
+    parts = []
+    if field == "phone":
+        # Телефоны нормализуются в text 'Телефон: +7...'
+        parts.append(r.text or "")
+    elif field == "name":
+        parts.append(r.author or "")
+        parts.append(r.text or "")
+    elif field == "email":
+        parts.append(r.text or "")
+    elif field == "inn":
+        parts.append(r.text or "")
+    elif field == "passport":
+        parts.append(r.text or "")
+    elif field == "auto":
+        parts.append(r.text or "")
+    else:
+        parts = [r.text, r.section, r.source, r.author]
+    return " ".join(x for x in parts if x).lower()
+
+
+def _search_local(query: str, mode: str, limit: int, field: str = "") -> list[dict]:
     """Поиск по локальному зеркалу.
 
     Фильтруем в Python: SQLite-функция lower() не знает кириллицу,
@@ -84,8 +152,7 @@ def _search_local(query: str, mode: str, limit: int) -> list[dict]:
         ).scalars().all()
     out: list[dict] = []
     for r in rows:
-        haystack = " ".join(x for x in (r.text, r.section, r.source, r.author)
-                            if x).lower()
+        haystack = _haystack_for(r, field)
         if q not in haystack:
             continue
         out.append(_to_item({
@@ -100,23 +167,27 @@ def _search_local(query: str, mode: str, limit: int) -> list[dict]:
 
 # ---------- точка входа ----------
 
-async def search_imported(query: str, mode: str = "query", limit: int = 20) -> list[dict]:
+async def search_imported(query: str, mode: str = "query", limit: int = 20,
+                          field: str = "") -> list[dict]:
     """Записи из импортированной БД, подходящие под запрос."""
     if not (query or "").strip():
         return []
     sb = SupabaseStore()
     if sb.enabled:
         try:
-            return await _search_supabase(query, mode, limit)
+            return await _search_supabase(query, mode, limit, field)
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase search fallback to local: %s", ex)
-    return await asyncio.to_thread(_search_local, query, mode, limit)
+    return await asyncio.to_thread(_search_local, query, mode, limit, field)
 
 
 # ---------- поиск профилей ----------
 
-def _search_profiles_local(query: str, limit: int = 5) -> list[dict]:
-    """Ищет профили (db_profiles) по ФИО / телефону / email / ИНН."""
+def _search_profiles_local(query: str, limit: int = 5, field: str = "") -> list[dict]:
+    """Ищет профили (db_profiles) по ФИО / телефону / email / ИНН.
+
+    Если задан field (имя/телефон/email/инн/паспорт/авто), ищет строго по нему.
+    """
     q = (query or "").strip()
     if not q:
         return []
@@ -125,29 +196,77 @@ def _search_profiles_local(query: str, limit: int = 5) -> list[dict]:
 
     out: list[dict] = []
     with SyncSessionLocal() as session:
-        # По ФИО (частично)
-        try:
+        name_rows: list[DbProfile] = []
+        extra_rows: list[DbProfile] = []
+
+        if field == "name":
             name_rows = session.query(DbProfile).filter(
                 DbProfile.full_name.ilike(f"%{q}%")
             ).limit(limit).all()
-            out.extend(name_rows)
-        except Exception as ex:
-            logger.debug("profile name search: %s", ex)
-
-        # По телефону / email / ИНН
-        extra_rows: list[DbProfile] = []
-        if digits:
-            extra_rows += session.query(DbProfile).filter(
-                DbProfile.phones.contains(digits)
-            ).limit(limit).all()
-        if "@" in q:
-            extra_rows += session.query(DbProfile).filter(
+        elif field in ("phone", "тел", "телефон"):
+            if digits:
+                extra_rows = session.query(DbProfile).filter(
+                    DbProfile.phones.contains(digits)
+                ).limit(limit).all()
+        elif field in ("email", "почта"):
+            extra_rows = session.query(DbProfile).filter(
                 DbProfile.emails.contains(qlower)
             ).limit(limit).all()
-        if q.isdigit() and len(q) in (10, 12):
-            extra_rows += session.query(DbProfile).filter(
+        elif field in ("inn", "иин"):
+            extra_rows = session.query(DbProfile).filter(
                 DbProfile.inn == q
             ).limit(limit).all()
+        elif field == "passport":
+            extra_rows = session.query(DbProfile).filter(
+                (DbProfile.passport_series.like(f"%{q}%")) |
+                (DbProfile.passport_number.like(f"%{q}%"))
+            ).limit(limit).all()
+        elif field in ("auto", "авто", "госномер"):
+            # ищем по госномеру в JSON vehicles через текст карточки (в Python ниже)
+            pass
+        elif field == "snils":
+            extra_rows = session.query(DbProfile).filter(
+                DbProfile.snils == q
+            ).limit(limit).all()
+        else:
+            # без тега — ищем везде (как раньше)
+            try:
+                name_rows = session.query(DbProfile).filter(
+                    DbProfile.full_name.ilike(f"%{q}%")
+                ).limit(limit).all()
+            except Exception as ex:
+                logger.debug("profile name search: %s", ex)
+            if digits:
+                extra_rows += session.query(DbProfile).filter(
+                    DbProfile.phones.contains(digits)
+                ).limit(limit).all()
+            if "@" in q:
+                extra_rows += session.query(DbProfile).filter(
+                    DbProfile.emails.contains(qlower)
+                ).limit(limit).all()
+            if q.isdigit() and len(q) in (10, 12):
+                extra_rows += session.query(DbProfile).filter(
+                    DbProfile.inn == q
+                ).limit(limit).all()
+
+        out.extend(name_rows)
+
+        # Поиск по госномеру авто (JSON) — фильтруем в Python
+        if field in ("auto", "авто", "госномер") or (field in ("", "имя") and not (name_rows or extra_rows)):
+            plate_key = q.upper().replace(" ", "")
+            try:
+                all_profiles = session.query(DbProfile).all()
+                for p in all_profiles:
+                    vehicles = p.vehicles if isinstance(p.vehicles, list) else []
+                    for v in vehicles:
+                        if isinstance(v, dict) and plate_key and \
+                           plate_key in str(v.get("plate") or "").upper():
+                            if p.id not in {x.id for x in out} and \
+                               p.id not in {x.id for x in extra_rows}:
+                                extra_rows.append(p)
+                            break
+            except Exception as ex:
+                logger.debug("profile auto search: %s", ex)
 
     ids = {p.id for p in out}
     for p in extra_rows:
@@ -237,11 +356,14 @@ def _profile_row_to_item(p: DbProfile) -> dict:
     }
 
 
-async def search_profiles(query: str, limit: int = 5) -> list[dict]:
-    """Профили людей из db_profiles по запросу (ФИО/телефон/email/ИНН)."""
+async def search_profiles(query: str, limit: int = 5, field: str = "") -> list[dict]:
+    """Профили людей из db_profiles по запросу (ФИО/телефон/email/ИНН и др.).
+
+    field — тип идентификатора: name/phone/email/inn/passport/snils/auto.
+    """
     if not (query or "").strip():
         return []
-    return await asyncio.to_thread(_search_profiles_local, query, limit)
+    return await asyncio.to_thread(_search_profiles_local, query, limit, field)
 
 
 # ---------- перекрёстные связи ----------

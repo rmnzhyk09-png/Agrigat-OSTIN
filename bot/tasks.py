@@ -7,11 +7,28 @@ from .collectors import collect_all, get_collector, scraper
 from .analysis import classify_items, analyze_sentiment
 from .reporting import generate_summary
 from .dbimport.query import search_imported, search_profiles, search_related
+from .services.blackbird import search_blackbird, PLATFORM as BB_PLATFORM
 
 logger = logging.getLogger(__name__)
 
 # Источники, дающие посты конкретного аккаунта (для /watch)
 ACCOUNT_SOURCES = ["mastodon", "bluesky", "reddit"]
+
+
+def _want_blackbird(nickname: str, mode: str, field: str) -> bool:
+    """Нужно ли запускать Blackbird для этого запроса.
+
+    Запускаем только для username/email/имени/телефона — не для длинных фраз.
+    """
+    q = (nickname or "").strip()
+    if not q:
+        return False
+    if field and field not in ("name", "email", "phone"):
+        return False
+    # длинная фраза (соцсети-поиск) — не для Blackbird
+    if len(q.split()) > 3:
+        return False
+    return True
 
 
 async def collect_account(query: str, limit: int = 10) -> list[dict]:
@@ -34,7 +51,7 @@ async def collect_account(query: str, limit: int = 10) -> list[dict]:
 
 
 async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
-                         mode: str = "query") -> dict:
+                         mode: str = "query", field: str = "") -> dict:
     """
     Запустить мониторинг по всем доступным платформам.
 
@@ -42,6 +59,7 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
         nickname: Запрос, никнейм или тег
         tags: Теги для классификации результатов
         mode: "query" (глобальный поиск) | "account" (по аккаунту) | "tag" (по хештегу)
+        field: Тип идентификатора из запроса (имя/телефон/инн/паспорт/email/авто/снилс)
 
     Returns:
         {items, summary, stats} или {error}
@@ -53,7 +71,7 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     db_found_records: list[dict] = []
     db_found_profiles: list[dict] = []
     try:
-        db_items = await search_imported(nickname, mode=mode, limit=20)
+        db_items = await search_imported(nickname, mode=mode, limit=20, field=field)
         seen = {(it.get("url") or f"{it.get('platform')}:{it.get('id')}")
                 for it in items}
         for it in db_items:
@@ -66,7 +84,7 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
             logger.info("db search: +%s записей из импортированной БД", len(items))
 
         # Добавляем полные карточки профилей (ФИО/телефон/email/ИНН)
-        profile_items = await search_profiles(nickname, limit=5)
+        profile_items = await search_profiles(nickname, limit=5, field=field)
         for it in profile_items:
             key = f"profile:{it.get('id')}"
             if key not in seen:
@@ -90,8 +108,29 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     except Exception as ex:
         logger.warning("поиск по импортированной БД: %s", ex)
 
+    # Blackbird — OSINT reverse username/email поиск (если настроен BLACKBIRD_DIR).
+    # Запускаем в отдельном потоке (внутри — subprocess, не блокируя цикл событий).
+    if _want_blackbird(nickname, mode, field):
+        try:
+            bb_items = await asyncio.to_thread(
+                search_blackbird, nickname,
+                as_email=("@" in nickname),
+            )
+            seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
+                    for it in items}
+            for it in bb_items:
+                key = it.get("url") or f"{BB_PLATFORM}:{it.get('id')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(it)
+            if bb_items:
+                logger.info("blackbird: +%s найденных аккаунтов", len(bb_items))
+        except Exception as ex:
+            logger.warning("blackbird: %s", ex)
+
     # Глубокий парсинг: полные тексты топовых страниц из веб-поиска
-    if mode == "query":
+    if mode == "query" and not field:
         web_urls = [it["url"] for it in items
                     if it.get("platform") in ("google", "serpapi", "brave")
                     and it.get("url", "").startswith("http")][:3]

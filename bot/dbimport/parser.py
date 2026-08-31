@@ -4,6 +4,7 @@ import csv
 import json
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -24,8 +25,8 @@ from .torrent import parse_torrent
 logger = logging.getLogger(__name__)
 
 # Расширения, которые бот принимает в /import
-SUPPORTED_EXTENSIONS = {".db", ".sqlite", ".sqlite3", ".csv", ".json", ".xlsx",
-                        ".zip", ".rar", ".torrent", ".txt"}
+SUPPORTED_EXTENSIONS = {".db", ".sqlite", ".sqlite3", ".sql", ".csv", ".json",
+                        ".xlsx", ".zip", ".rar", ".7z", ".torrent", ".txt"}
 
 # Ограничения при распаковке архивов (защита от «архивных» атак).
 # Настраиваются переменными окружения (Render → Environment):
@@ -72,7 +73,7 @@ def parse_file(path: str | Path, filename: str = "", _depth: int = 0) -> tuple[d
     """
     path = Path(path)
     ext = path.suffix.lower()
-    if ext in (".zip", ".rar"):
+    if ext in (".zip", ".rar", ".7z"):
         return _parse_archive(path, filename or path.name, _depth)
     if ext == ".torrent":
         parsed = parse_torrent(path, filename or path.name)
@@ -80,6 +81,9 @@ def parse_file(path: str | Path, filename: str = "", _depth: int = 0) -> tuple[d
     if ext in (".db", ".sqlite", ".sqlite3"):
         rows, source = _iter_sqlite(path)
         fmt = "sqlite"
+    elif ext == ".sql":
+        rows, source = _iter_sql_dump(path)
+        fmt = "sql"
     elif ext == ".csv":
         rows, source = _iter_csv(path)
         fmt = "csv"
@@ -203,13 +207,57 @@ def _extract_rar(path: Path, target: Path):
             "(в контейнере: apt-get install libarchive-tools)")
 
 
+def _extract_7z(path: Path, target: Path):
+    # 1) py7zr — чистый Python, работает и в Windows, и в контейнере
+    try:
+        import py7zr
+        with py7zr.SevenZipFile(str(path), mode="r") as archive:
+            names = archive.getnames()
+            files = [n for n in names if not n.endswith("/")]
+            if len(files) > MAX_ARCHIVE_FILES:
+                raise ValueError(f"В архиве больше {MAX_ARCHIVE_FILES} файлов")
+            # Суммарный размер через list()
+            total = 0
+            for info in archive.list():
+                if info.is_directory:
+                    continue
+                total += info.uncompressed or 0
+            if total > MAX_ARCHIVE_TOTAL:
+                raise ValueError(f"Архив больше {MAX_ARCHIVE_TOTAL_MB} МБ — не разбираю")
+            archive.extractall(path=target)
+        return
+    except ValueError:
+        raise
+    except Exception as ex:
+        logger.info("py7zr: %s — пробую 7z/bsdtar", ex)
+
+    # 2) запасной путь: 7z / 7za / 7zr / bsdtar
+    for tool in ("7z", "7za", "7zr", "bsdtar"):
+        if tool == "bsdtar":
+            cmd = [tool, "-xf", str(path), "-C", str(target)]
+        else:
+            cmd = [tool, "x", "-y", f"-o{target}", str(path)]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=180)
+        except FileNotFoundError:
+            continue
+        if proc.returncode == 0:
+            return
+        # 7z вернул ошибку — пробуем следующий
+    raise ValueError(
+        "7z: не найден распаковщик (py7zr не установлен и нет 7z/bsdtar)")
+
+
 def _parse_archive(path: Path, filename: str, depth: int) -> tuple[dict, list[dict]]:
     if depth >= MAX_ARCHIVE_DEPTH:
         raise ValueError("Вложенность архивов больше 3 уровней")
     tmp = Path(tempfile.mkdtemp(prefix="import_"))
     try:
-        if path.suffix.lower() == ".zip":
+        ext = path.suffix.lower()
+        if ext == ".zip":
             _extract_zip(path, tmp)
+        elif ext == ".7z":
+            _extract_7z(path, tmp)
         else:
             _extract_rar(path, tmp)
 
@@ -418,6 +466,175 @@ def _iter_sqlite(path: Path) -> tuple[list[dict], str]:
         logger.warning("sqlite parse error: %s", ex)
     if not source:
         source = "sqlite"
+    return rows, source
+
+
+_SQL_TOKEN_VALUES = re.compile(
+    r"INSERT\s+INTO\s+`?([\wа-яёА-ЯЁ\-]+)`?\s*\(([^)]+)\)\s*VALUES",
+    re.IGNORECASE,
+)
+_SQL_SIMPLE_INSERT = re.compile(
+    r"INSERT\s+INTO\s+`?([\wа-яёА-ЯЁ\-]+)`?(?:\s*\(([^)]*)\))?\s*VALUES",
+    re.IGNORECASE,
+)
+
+
+def _sql_split_values(s: str) -> list[str]:
+    """Разбивает список значений INSERT (a,b,(c,d),(e,f)) на отдельные кортежи."""
+    values: list[str] = []
+    i = 0
+    depth = 0
+    start = 0
+    in_str = None
+    while i < len(s):
+        ch = s[i]
+        if in_str:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = None
+            i += 1
+            continue
+        if ch in "'\"":
+            in_str = ch
+            i += 1
+            continue
+        if ch == "(":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                values.append(s[start:i + 1])
+        elif ch == "," and depth == 0:
+            pass
+        i += 1
+    return values
+
+
+def _sql_parse_value(tok: str):
+    """Распарсить один SQL литерал в Python-значение."""
+    tok = tok.strip()
+    if not tok:
+        return ""
+    single = False
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "'\"":
+        single = True
+        body = tok[1:-1].replace("''", "'").replace('\\"', '"')
+        return body
+    low = tok.lower()
+    if low in ("null", "none", ""):
+        return ""
+    if low in ("true", "1", "b'1'"):
+        return 1
+    if low in ("false", "0", "b'0'"):
+        return 0
+    if single:
+        return ""
+    try:
+        return int(tok)
+    except ValueError:
+        pass
+    try:
+        return float(tok)
+    except ValueError:
+        pass
+    return tok
+
+
+def _parse_sql_row(values_str: str, cols: list[str] | None,
+                   table: str) -> dict:
+    """Собирает dict: колонка -> значение из кортежа VALUES."""
+    inner = values_str[1:-1].strip()
+    # Простейшее разделение на токены с учётом строк в кавычках
+    tokens: list[str] = []
+    cur = ""
+    in_str = None
+    for ch in inner:
+        if in_str:
+            cur += ch
+            if ch == "\\":
+                continue
+            if ch == in_str:
+                in_str = None
+            continue
+        if ch in "'\"":
+            in_str = ch
+            cur += ch
+        elif ch == ",":
+            tokens.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip() or tokens:
+        tokens.append(cur)
+
+    if cols:
+        d = {}
+        for i, tok in enumerate(tokens):
+            col = cols[i] if i < len(cols) else f"col{i + 1}"
+            d[col] = _sql_parse_value(tok)
+        return d
+    # Без заголовков колонок — нумеруем
+    return {f"col{i + 1}": _sql_parse_value(tok) for i, tok in enumerate(tokens)}
+
+
+def _iter_sql_dump(path: Path) -> tuple[list[dict], str]:
+    """Читает SQL-дамп: таблицы и строки INSERT ... VALUES."""
+    rows: list[dict] = []
+    source = ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError as ex:
+        logger.warning("sql dump read error: %s", ex)
+        return [], "sql"
+
+    for m in _SQL_SIMPLE_INSERT.finditer(text):
+        table = m.group(1)
+        cols_raw = m.group(2) or ""
+        cols = [c.strip().strip("`\"'") for c in cols_raw.split(",") if c.strip()] or None
+        values_str = text[m.end():]
+        # отрезаем до конца VALUES-списка (до ';' на верхнем уровне)
+        end = 0
+        depth = 0
+        in_str = None
+        for i in range(len(values_str)):
+            ch = values_str[i]
+            if in_str:
+                if ch == "\\":
+                    i += 1
+                    continue
+                if ch == in_str:
+                    in_str = None
+                continue
+            if ch in "'\"":
+                in_str = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == ";" and depth <= 0:
+                end = i
+                break
+        if end == 0:
+            end = len(values_str)
+        segment = values_str[:end]
+        # Собираем кортежи VALUES (....), (....), ...
+        for tuple_str in _sql_split_values(segment):
+            try:
+                row = _parse_sql_row(tuple_str, cols, table)
+            except Exception as ex:
+                logger.debug("sql row parse: %s", ex)
+                continue
+            if any((v is not None and str(v).strip()) for v in row.values()):
+                rows.append(row)
+                if not source:
+                    source = table
+    if not source:
+        source = "sql"
     return rows, source
 
 

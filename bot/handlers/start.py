@@ -18,7 +18,7 @@ from aiogram.fsm.context import FSMContext
 
 # Переиспользуем диалог мониторинга: кнопки меню сразу задают режим поиска,
 # поэтому пользователю не нужно проходить шаг «выбор режима».
-from .monitor import MODE_HINTS, MonitorState, cmd_monitor
+from .monitor import QUERY_HINT, MonitorState, cmd_monitor
 from .catalog import cmd_catalog
 from .history import cmd_history
 from .subscribe import cmd_subscribe
@@ -74,7 +74,7 @@ def _start_menu() -> InlineKeyboardMarkup:
     ])
 
 
-# Кнопка инлайн-меню → режим диалога мониторинга (см. monitor.MODE_HINTS).
+# Кнопка инлайн-меню → диалог поиска (см. monitor.QUERY_HINT).
 MENU_MODES = {
     "find": "query",     # 🔍 глобальный поиск по фразе
     "tag": "tag",        # #️⃣ поиск по хештегу
@@ -95,15 +95,15 @@ async def _send_help(message: Message):
         "🕵️ <b>AGRIGAT OSTIN</b> — пробив-терминал: мониторинг публичных "
         "источников, импорт баз данных, поиск по аккаунтам, никам и фразам.\n\n"
         "<b>🔍 Поиск</b>\n"
-        "/find &lt;запрос&gt; — пробив по фразе\n"
+        "/find &lt;запрос&gt; — пробив по фразе (можно по полю: телефон:, инн:, паспорт:)\n"
         "/tag &lt;тег&gt; — пробив по хештегу\n"
         "/web &lt;запрос&gt; — пробив в сети (Google)\n"
-        "/monitor — выбор режима пробива\n\n"
+        "/monitor — пробив: сразу вводите запрос (с префиксом поля при нужде)\n\n"
         "<b>👁 Слежение</b>\n"
         "/watch &lt;ник&gt; — следить за целью\n"
         "/unwatch &lt;ник&gt; — снять слежение\n\n"
         "<b>🧰 Инструменты</b>\n"
-        "/import — импорт базы (CSV/JSON/SQLite/XLSX)\n"
+        "/import — импорт базы (CSV/JSON/SQLite/XLSX/SQL/ZIP/RAR/7z)\n"
         "/rss &lt;url&gt; — RSS-лента\n"
         "/scrape &lt;url&gt; — снять содержимое страницы\n\n"
         "<b>📰 Каталог</b>\n"
@@ -162,7 +162,7 @@ async def dispatch_menu(message: Message, state: FSMContext, action: str):
         mode = MENU_MODES[action]
         await state.update_data(mode=mode)
         await state.set_state(MonitorState.query)
-        await message.answer(MODE_HINTS.get(mode, MODE_HINTS["query"]))
+        await message.answer(QUERY_HINT)
 
     else:
         await message.answer(f"Неизвестное действие: {action}")

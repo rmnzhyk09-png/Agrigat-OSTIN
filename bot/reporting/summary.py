@@ -7,6 +7,7 @@ PLATFORM_NAMES = {
     "google": "Google", "serpapi": "SerpAPI", "brave": "Brave",
     "db": "База импорта",
     "profile": "Профиль человека",
+    "blackbird": "Blackbird",
 }
 
 

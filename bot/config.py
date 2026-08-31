@@ -69,6 +69,12 @@ class Settings:
         self.supabase_project_ref = os.getenv("SUPABASE_PROJECT_REF", "").strip()
         self.supabase_pat = os.getenv("SUPABASE_ACCESS_TOKEN", "").strip()
 
+        # Blackbird — OSINT поиск по никнейму/email (готовый инструмент p1ngul1n0/blackbird)
+        # Путь к папке blackbird (там лежит blackbird.py). Пусто = не подключён.
+        self.blackbird_dir = os.getenv("BLACKBIRD_DIR", "").strip()
+        # Максимальное время (сек) на один поиск Blackbird
+        self.blackbird_timeout = int(os.getenv("BLACKBIRD_TIMEOUT", "120"))
+
     def validate(self) -> list[str]:
         """Проверяет обязательные настройки."""
         errors = []
