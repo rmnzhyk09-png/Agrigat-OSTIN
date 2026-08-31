@@ -10,12 +10,13 @@ import re
 from typing import Optional
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..config import settings
 from ..db.database import SyncSessionLocal
 from ..db.models import DbProfile, DbRecord
 from .store import SupabaseStore
+from .schema import extract_emails, extract_phones
 
 logger = logging.getLogger(__name__)
 
@@ -241,3 +242,149 @@ async def search_profiles(query: str, limit: int = 5) -> list[dict]:
     if not (query or "").strip():
         return []
     return await asyncio.to_thread(_search_profiles_local, query, limit)
+
+
+# ---------- перекрёстные связи ----------
+
+_INN_RE = re.compile(r"\b(\d{10}|\d{12})\b")
+_PLATE_RE = re.compile(r"\b([А-ЯЁA-Z]{1}\d{3}[А-ЯЁA-Z]{2}\d{2,3})\b")
+_CAR_INN_RE = re.compile(r"(?:" + _PLATE_RE.pattern + r"|" + _INN_RE.pattern + r")")
+
+
+def _collect_identifiers(records: list[dict], profiles: list[dict]) -> dict:
+    """Собирает телефоны/email/ИНН/номера авто/адреса из найденного.
+
+    Возвращает {phones: [...], emails: [...], inns: [...], plates: [...],
+    addresses: [...]} — уникальные, для последующего поиска связей.
+    """
+    phones: set[str] = set()
+    emails: set[str] = set()
+    inns: set[str] = set()
+    plates: set[str] = set()
+    addresses: set[str] = set()
+
+    for it in records:
+        text = " ".join(x for x in (it.get("text"), it.get("author"), it.get("url")) if x) or ""
+        phones.update(extract_phones(text))
+        emails.update(extract_emails(text))
+        inns.update(_INN_RE.findall(text))
+        plates.update(_PLATE_RE.findall(text))
+
+    for p in profiles:
+        prof = (p.get("profile") or p) if isinstance(p, dict) else {}
+        phones.update(prof.get("phones") or [])
+        emails.update(prof.get("emails") or [])
+        if prof.get("inn"):
+            inns.add(prof["inn"])
+        if prof.get("registration_address"):
+            addresses.add(prof["registration_address"].strip().lower())
+        # Телефоны/email из текста карточки
+        text = p.get("text") or ""
+        phones.update(extract_phones(text))
+        emails.update(extract_emails(text))
+        plates.update(_PLATE_RE.findall(text))
+        inns.update(_INN_RE.findall(text))
+
+    return {
+        "phones": sorted(p for p in phones if p),
+        "emails": sorted(e for e in emails if e),
+        "inns": sorted(i for i in inns if i),
+        "plates": sorted(x.upper() for x in plates if x),
+        "addresses": sorted(a for a in addresses if a),
+    }
+
+
+def _search_related_local(identifiers: dict, hit_profile_ids: set,
+                          hit_record_ids: set) -> list[dict]:
+    """Ищет другие записи/профили, связанные по телефонам/email/ИНН/авто/адресу."""
+    related: dict[str, dict] = {}
+    seen_ids: set = set()
+
+    phones = identifiers.get("phones") or []
+    emails = identifiers.get("emails") or []
+    inns = identifiers.get("inns") or []
+    plates = identifiers.get("plates") or []
+    addresses = identifiers.get("addresses") or []
+
+    with SyncSessionLocal() as session:
+        # 1) Профили, делящие контакт с найденными (кроме уже выданных)
+        profiles_related: list[DbProfile] = []
+        if phones or emails or inns:
+            name_conds = []
+            phone_conds = []
+            for p in phones:
+                phone_conds.append(DbProfile.phones.contains(p))
+            for e in emails:
+                phone_conds.append(DbProfile.emails.contains(e.lower()))
+            for inn in inns:
+                phone_conds.append(DbProfile.inn == inn)
+            if phone_conds:
+                profiles_related += session.query(DbProfile).filter(
+                    or_(*phone_conds)
+                ).all()
+
+        # По общему адресу — люди, проживающие по тому же адресу.
+        # SQLite lower() не знает кириллицу, поэтому фильтруем в Python.
+        if addresses:
+            try:
+                all_profiles = session.query(DbProfile).all()
+                for addr in addresses:
+                    for p in all_profiles:
+                        if p.id in hit_profile_ids or p.id in seen_ids:
+                            continue
+                        stored = (p.registration_address or "").strip().lower()
+                        if stored and addr and addr in stored:
+                            seen_ids.add(p.id)
+                            related[f"profile:{p.id}"] = _profile_row_to_item(p)
+            except Exception:
+                pass
+
+        for p in profiles_related:
+            if p.id in hit_profile_ids or p.id in seen_ids:
+                continue
+            seen_ids.add(p.id)
+            related[f"profile:{p.id}"] = _profile_row_to_item(p)
+
+        # 2) Записи (db_records), содержащие те же контакты/ИНН/номер авто
+        record_terms = list(phones) + list(emails) + list(inns) + list(plates)
+        if record_terms:
+            conds = []
+            for term in record_terms[:20]:
+                conds.append(DbRecord.text.like(f"%{term}%"))
+                conds.append(DbRecord.author.like(f"%{term}%"))
+            rows = session.query(DbRecord).filter(or_(*conds)) \
+                .order_by(DbRecord.id.desc()).limit(300).all()
+            for r in rows:
+                if r.id in hit_record_ids:
+                    continue
+                related[f"db:{r.checksum}"] = _to_item({
+                    "id": r.id, "checksum": r.checksum, "section": r.section,
+                    "source": r.source, "author": r.author, "text": r.text,
+                    "url": r.url, "date": r.date,
+                })
+                if len(related) > 150:
+                    break
+
+    return list(related.values())
+
+
+async def search_related(records: list[dict], profiles: list[dict]) -> list[dict]:
+    """Связанные записи/профили: перекрёстные данные по контактам и ИНН.
+
+    Принимает найденные записи и профили, вытаскивает из них телефоны/email/
+    ИНН/номера авто/адреса и ищет другие сущности, которые их разделяют.
+    """
+    identifiers = _collect_identifiers(records, profiles)
+    hit_profile_ids = {str(p.get("id", "")).replace("profile:", "") for p in profiles}
+    hit_record_ids = {str(r.get("id", "")) for r in records}
+    hit_profile_ids = {x for x in hit_profile_ids if x.isdigit()}
+    hit_record_ids = {x for x in hit_record_ids if x.isdigit()}
+
+    has_identifiers = bool(identifiers["phones"] or identifiers["emails"]
+                           or identifiers["inns"] or identifiers["plates"]
+                           or identifiers["addresses"])
+    if not has_identifiers:
+        return []
+
+    return await asyncio.to_thread(
+        _search_related_local, identifiers, hit_profile_ids, hit_record_ids)

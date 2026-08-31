@@ -6,7 +6,7 @@ from typing import Optional
 from .collectors import collect_all, get_collector, scraper
 from .analysis import classify_items, analyze_sentiment
 from .reporting import generate_summary
-from .dbimport.query import search_imported, search_profiles
+from .dbimport.query import search_imported, search_profiles, search_related
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,8 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
                               progress_callback=progress_callback, mode=mode)
 
     # Добавляем записи из импортированной БД (Supabase / локальное зеркало)
+    db_found_records: list[dict] = []
+    db_found_profiles: list[dict] = []
     try:
         db_items = await search_imported(nickname, mode=mode, limit=20)
         seen = {(it.get("url") or f"{it.get('platform')}:{it.get('id')}")
@@ -59,6 +61,7 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
             if key not in seen:
                 seen.add(key)
                 items.append(it)
+            db_found_records.append(it)
         if db_items:
             logger.info("db search: +%s записей из импортированной БД", len(items))
 
@@ -69,6 +72,21 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
             if key not in seen:
                 seen.add(key)
                 items.append(it)
+            db_found_profiles.append(it)
+
+        # Перекрёстные связи: другие профили/записи, делящие контакт/ИНН/авто
+        try:
+            related = await search_related(db_found_records + db_found_profiles,
+                                           db_found_profiles)
+            for it in related:
+                key = it.get("url") or f"{it.get('platform')}:{it.get('id')}"
+                if key not in seen:
+                    seen.add(key)
+                    items.append(it)
+            if related:
+                logger.info("related search: +%s связанных записей", len(related))
+        except Exception as rex:
+            logger.warning("перекрёстный поиск: %s", rex)
     except Exception as ex:
         logger.warning("поиск по импортированной БД: %s", ex)
 
