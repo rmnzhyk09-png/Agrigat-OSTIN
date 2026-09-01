@@ -11,7 +11,12 @@ router = Router()
 @router.message(Command("watch"))
 async def cmd_watch(message: Message, command: CommandObject):
     """Слежение за аккаунтом: /watch @durov"""
-    query = (command.args or "").strip()
+    await run_watch(message, (command.args or "").strip())
+
+
+async def run_watch(message: Message, query: str):
+    """Добавить слежение (используется /watch и «живой» кнопкой меню)."""
+    query = (query or "").strip()
     if not query or query.lower() == "list":
         watches = await repo.list_watches(message.from_user.id)
         if not watches:

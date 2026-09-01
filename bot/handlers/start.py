@@ -3,6 +3,9 @@
 Главное меню бота Agrigat Ostin: текст справки + два вида клавиатур:
 - ReplyKeyboard (MENU) — постоянные кнопки команд внизу экрана;
 - InlineKeyboard (_start_menu) — быстрые действия под приветствием.
+
+Кнопки «живые»: «Веб-поиск», «Blackbird», «Профиль», «Слежение» не печатают
+формат команды, а сразу спрашивают недостающее (запрос/ник) и выполняют действие.
 """
 from aiogram import Router, F
 from aiogram.types import (
@@ -15,41 +18,62 @@ from aiogram.types import (
 )
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 # Переиспользуем диалог мониторинга: кнопки меню сразу задают режим поиска,
 # поэтому пользователю не нужно проходить шаг «выбор режима».
-from .monitor import QUERY_HINT, MonitorState, cmd_monitor
+from .monitor import QUERY_HINT, MonitorState, cmd_monitor, field_chips, run_blackbird
 from .catalog import cmd_catalog
 from .history import cmd_history
 from .subscribe import cmd_subscribe
+from .tools import run_web
+from .watch import run_watch
+from .profile import run_profile
+from .import_db import cmd_import
 
 router = Router()
 
 # Главное меню: постоянная reply-клавиатура с кнопками-действиями.
 # Текст кнопки на русском, обработчик живёт в handlers/menu.py.
 RU_BUTTONS = {
-    "🔍 Поиск": "find",
-    "#️⃣ По тегу": "tag",
-    "👤 По аккаунту": "account",
+    "🔎 Пробив": "find",
     "🌐 Веб-поиск": "web",
-    "📰 Каталог": "catalog",
-    "📜 История": "history",
+    "📥 Импорт": "import",
+    "👤 Профиль": "profile",
+    "🕊 Blackbird": "blackbird",
     "📡 Монитор": "monitor",
     "👁 Слежение": "watch",
     "📬 Дайджест": "subscribe",
+    "📰 Каталог": "catalog",
+    "📜 История": "history",
     "❓ Помощь": "help",
 }
 
 MENU = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="🌐 Веб-поиск")],
-        [KeyboardButton(text="#️⃣ По тегу"), KeyboardButton(text="👤 По аккаунту")],
-        [KeyboardButton(text="📡 Монитор"), KeyboardButton(text="👁 Слежение")],
+        [KeyboardButton(text="🔎 Пробив"), KeyboardButton(text="🌐 Веб-поиск")],
+        [KeyboardButton(text="📥 Импорт"), KeyboardButton(text="👤 Профиль")],
+        [KeyboardButton(text="🕊 Blackbird"), KeyboardButton(text="📡 Монитор")],
+        [KeyboardButton(text="👁 Слежение"), KeyboardButton(text="📬 Дайджест")],
         [KeyboardButton(text="📰 Каталог"), KeyboardButton(text="📜 История")],
-        [KeyboardButton(text="📬 Дайджест"), KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="❓ Помощь")],
     ],
     resize_keyboard=True,
 )
+
+
+class Capture(StatesGroup):
+    """Ожидание одного значения от «живой» кнопки (запрос/ник)."""
+    value = State()
+
+
+# Подсказки «живых» кнопок: что отправить пользователю.
+CAPTURE_HINTS = {
+    "web": "🌐 <b>Веб-поиск</b>: отправьте запрос одним сообщением.",
+    "profile": "👤 <b>Профиль</b>: отправьте ФИО, телефон или email.",
+    "blackbird": "🕊 <b>Blackbird</b>: отправьте ник или email для поиска аккаунтов.",
+    "watch": "👁 <b>Слежение</b>: отправьте ник или ссылку (пример: @durov).",
+}
 
 
 def _start_menu() -> InlineKeyboardMarkup:
@@ -59,26 +83,27 @@ def _start_menu() -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔍 Пробив по фразе", callback_data="menu:find"),
-            InlineKeyboardButton(text="#️⃣ Пробив по тегу", callback_data="menu:tag"),
+            InlineKeyboardButton(text="🔎 Пробив", callback_data="menu:find"),
+            InlineKeyboardButton(text="🌐 Веб-поиск", callback_data="menu:web"),
         ],
         [
-            InlineKeyboardButton(text="👤 Пробив по аккаунту", callback_data="menu:account"),
-            InlineKeyboardButton(text="🌐 Пробив в сети", callback_data="menu:web"),
+            InlineKeyboardButton(text="📥 Импорт БД", callback_data="menu:import"),
+            InlineKeyboardButton(text="👤 Профиль", callback_data="menu:profile"),
         ],
         [
-            InlineKeyboardButton(text="📰 Каталог пробива", callback_data="menu:catalog"),
-            InlineKeyboardButton(text="📜 История операций", callback_data="menu:history"),
+            InlineKeyboardButton(text="🕊 Blackbird", callback_data="menu:blackbird"),
+            InlineKeyboardButton(text="📡 Монитор", callback_data="menu:monitor"),
         ],
-        [InlineKeyboardButton(text="❓ Все команды", callback_data="menu:help")],
+        [
+            InlineKeyboardButton(text="📰 Каталог", callback_data="menu:catalog"),
+            InlineKeyboardButton(text="❓ Все команды", callback_data="menu:help"),
+        ],
     ])
 
 
 # Кнопка инлайн-меню → диалог поиска (см. monitor.QUERY_HINT).
 MENU_MODES = {
-    "find": "query",     # 🔍 глобальный поиск по фразе
-    "tag": "tag",        # #️⃣ поиск по хештегу
-    "account": "account" # 👤 поиск по аккаунту/нику
+    "find": "query",     # 🔎 глобальный поиск по фразе
 }
 
 
@@ -94,26 +119,24 @@ async def _send_help(message: Message):
     text = (
         "🕵️ <b>AGRIGAT OSTIN</b> — пробив-терминал: мониторинг публичных "
         "источников, импорт баз данных, поиск по аккаунтам, никам и фразам.\n\n"
-        "<b>🔍 Поиск</b>\n"
+        "<b>🔎 Поиск</b>\n"
         "/find &lt;запрос&gt; — пробив по фразе (можно по полю: телефон:, инн:, паспорт:)\n"
         "/tag &lt;тег&gt; — пробив по хештегу\n"
         "/web &lt;запрос&gt; — пробив в сети (Google)\n"
-        "/monitor — пробив: сразу вводите запрос (с префиксом поля при нужде)\n\n"
+        "/monitor — пробив: сразу вводите запрос (кнопки полей внизу)\n"
+        "/blackbird — аккаунты по нику/email (OSINT)\n"
+        "/profile &lt;ФИО/телефон&gt; — карточка профиля из импортированных БД\n\n"
         "<b>👁 Слежение</b>\n"
         "/watch &lt;ник&gt; — следить за целью\n"
         "/unwatch &lt;ник&gt; — снять слежение\n\n"
-        "<b>🧰 Инструменты</b>\n"
-        "/import — импорт базы (CSV/JSON/SQLite/XLSX/SQL/ZIP/RAR/7z)\n"
-        "/rss &lt;url&gt; — RSS-лента\n"
-        "/scrape &lt;url&gt; — снять содержимое страницы\n\n"
+        "<b>🧰 Импорт</b>\n"
+        "/import — файлом (CSV/JSON/SQLite/XLSX/SQL/ZIP/RAR/7z)\n"
+        "/import_url &lt;url&gt; — по прямой ссылке (обходит лимит 20 МБ)\n\n"
         "<b>📰 Каталог</b>\n"
         "/catalog — список групп\n"
-        "/bot &lt;группа&gt; — боты группы\n"
-        "/info &lt;название&gt; — карточка бота\n"
         "/search &lt;запрос&gt; — поиск по каталогу\n\n"
         "<b>📬 Служба</b>\n"
         "/subscribe — ежедневный дайджест\n"
-        "/unsubscribe — выключить дайджест\n"
         "/history — история операций\n"
         "/report — последний отчёт\n"
         "/status — журнал задач\n"
@@ -134,11 +157,8 @@ async def dispatch_menu(message: Message, state: FSMContext, action: str):
     if action == "help":
         await _send_help(message)
 
-    elif action == "web":
-        await message.answer(
-            "Формат: /web &lt;запрос&gt;\nПример: /web лучшие ноутбуки 2026",
-            parse_mode="HTML",
-        )
+    elif action == "import":
+        await cmd_import(message)
 
     elif action == "catalog":
         await cmd_catalog(message)
@@ -149,23 +169,47 @@ async def dispatch_menu(message: Message, state: FSMContext, action: str):
     elif action == "monitor":
         await cmd_monitor(message, state)
 
-    elif action == "watch":
-        await message.answer(
-            "Формат: /watch &lt;ник или ссылка&gt;\nПример: /watch @durov\n\n"
-            "Бот проверяет аккаунт каждые 20 минут и пришлёт новые посты."
-        )
-
     elif action == "subscribe":
         await cmd_subscribe(message, state)
+
+    elif action in CAPTURE_HINTS:
+        # «Живая кнопка»: спрашиваем значение, затем выполняем действие.
+        await state.update_data(intent=action)
+        await state.set_state(Capture.value)
+        await message.answer(CAPTURE_HINTS[action], parse_mode="HTML")
 
     elif action in MENU_MODES:
         mode = MENU_MODES[action]
         await state.update_data(mode=mode)
         await state.set_state(MonitorState.query)
-        await message.answer(QUERY_HINT)
+        await message.answer(QUERY_HINT, reply_markup=field_chips())
 
     else:
         await message.answer(f"Неизвестное действие: {action}")
+
+
+@router.message(Capture.value)
+async def process_capture(message: Message, state: FSMContext):
+    """Значение для «живой» кнопки → выполнение действия."""
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    intent = data.get("intent", "")
+    await state.clear()
+
+    if not text or text.startswith("/"):
+        await message.answer("Отправьте текст или /cancel.")
+        return
+
+    if intent == "web":
+        await run_web(message, text)
+    elif intent == "profile":
+        await run_profile(message, text)
+    elif intent == "blackbird":
+        await run_blackbird(message, text)
+    elif intent == "watch":
+        await run_watch(message, text)
+    else:
+        await message.answer("Неизвестное действие.")
 
 
 @router.callback_query(F.data.startswith("menu:"))

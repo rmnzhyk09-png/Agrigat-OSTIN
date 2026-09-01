@@ -25,7 +25,12 @@ KEY_HINTS = (
 @router.message(Command("web"))
 async def cmd_web(message: Message, command: CommandObject):
     """Универсальный веб-поиск: /web запрос."""
-    query = (command.args or "").strip()
+    await run_web(message, (command.args or "").strip())
+
+
+async def run_web(message: Message, query: str):
+    """Веб-поиск по тексту (используется /web и «живой» кнопкой меню)."""
+    query = (query or "").strip()
     if not query:
         await message.answer(
             "Формат: /web &lt;запрос&gt;\nПример: /web лучшие ноутбуки 2026\n\n" + KEY_HINTS

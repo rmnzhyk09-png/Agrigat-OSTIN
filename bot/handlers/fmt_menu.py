@@ -10,6 +10,7 @@
 import logging
 
 from aiogram import Router, F
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     InlineKeyboardMarkup,
     CallbackQuery,
@@ -67,7 +68,8 @@ def _result_kb(has_items: bool) -> InlineKeyboardMarkup:
     if has_items:
         rows.append([{"text": "📋 Показать все находки",
                       "callback_data": "fmt:list"}])
-    rows.append([{"text": "🚫 Не сохранять", "callback_data": "fmt:close"}])
+    rows.append([{"text": "✏️ Новый поиск", "callback_data": "fmt:new"},
+                 {"text": "🚫 Не сохранять", "callback_data": "fmt:close"}])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -148,6 +150,18 @@ async def _send_chunk(message: Message, title: str, items: list[dict],
 
     await message.answer("\n".join(lines), parse_mode="HTML",
                          disable_web_page_preview=True, reply_markup=kb)
+
+
+@router.callback_query(F.data == "fmt:new")
+async def start_new_search(callback: CallbackQuery, state: FSMContext):
+    """Начать новый поиск с клавиатуры форматов (✏️ Новый поиск)."""
+    from .start import cmd_monitor
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await cmd_monitor(callback.message, state)
+    await callback.answer("Новый поиск!")
 
 
 @router.callback_query(F.data == "fmt:closelist")

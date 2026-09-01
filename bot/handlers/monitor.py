@@ -41,6 +41,51 @@ FIELD_TITLES = {
     "auto": "🚗 Госномер авто",
 }
 
+# Кнопки-«чипы» поля поиска (показываются под подсказкой).
+FIELD_CHIP_ORDER = [
+    ("name", "email"),
+    ("phone", "inn"),
+    ("passport", "auto"),
+]
+
+# Быстрые теги для классификации — выбор вместо свободного ввода.
+QUICK_TAGS = ["Финансы", "ИТ", "Авто", "Люди", "Долги", "Новости"]
+TAG_EMOJI = {
+    "Финансы": "💸",
+    "ИТ": "🤖",
+    "Авто": "🚗",
+    "Люди": "🧑",
+    "Долги": "⚖️",
+    "Новости": "🌍",
+}
+
+
+def field_chips() -> InlineKeyboardMarkup:
+    """Клавиатура быстрого выбора поля поиска."""
+    rows = [
+        [InlineKeyboardButton(text=FIELD_TITLES[f], callback_data=f"qm:field:{f}")
+         for f in pair]
+        for pair in FIELD_CHIP_ORDER
+    ]
+    rows.append([InlineKeyboardButton(text="🔎 Глобальный поиск",
+                                      callback_data="qm:field:")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tags_chips() -> InlineKeyboardMarkup:
+    """Клавиатура быстрых тегов + пропуск."""
+    rows = []
+    for i in range(0, len(QUICK_TAGS), 2):
+        pair = QUICK_TAGS[i:i + 2]
+        rows.append([
+            InlineKeyboardButton(text=f"{TAG_EMOJI[t]} {t}",
+                                 callback_data=f"qm:tag:{t}")
+            for t in pair
+        ])
+    rows.append([InlineKeyboardButton(text="🚫 Пропустить",
+                                      callback_data="mon:skiptags")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 QUERY_HINT = (
     "Отправьте цель поиска. Можно сразу указать, по какому полю искать:\n\n"
     "• <code>имя:Иванов</code> или <code>фио:Петров</code>\n"
@@ -58,6 +103,7 @@ QUERY_HINT = (
 class MonitorState(StatesGroup):
     """Состояния диалога мониторинга."""
     query = State()
+    fieldvalue = State()
     tags = State()
 
 
@@ -124,10 +170,9 @@ async def cmd_tag(message: Message, command: CommandObject):
     await _finish(message, query, tags=[query], mode="tag")
 
 
-@router.message(Command("blackbird"))
-async def cmd_blackbird(message: Message, command: CommandObject):
-    """Blackbird: OSINT-поиск аккаунтов по нику/email (/bb ник)."""
-    raw = (command.args or "").strip()
+async def run_blackbird(message: Message, raw: str):
+    """OSINT-поиск аккаунтов Blackbird (/blackbird и кнопка меню)."""
+    raw = (raw or "").strip()
     if not raw:
         await message.answer(
             "Формат: /blackbird &lt;ник или email&gt;\n"
@@ -147,18 +192,70 @@ async def cmd_blackbird(message: Message, command: CommandObject):
     await send_findings(message, f"🕊 Blackbird: {raw}", items, {"stats": stats})
 
 
+@router.message(Command("blackbird"))
+async def cmd_blackbird(message: Message, command: CommandObject):
+    """Blackbird: OSINT-поиск аккаунтов по нику/email (/bb ник)."""
+    await run_blackbird(message, (command.args or ""))
+
+
 # ---------- Диалог /monitor ----------
 
 @router.message(Command("monitor"))
 async def cmd_monitor(message: Message, state: FSMContext):
     """Начало мониторинга — сразу запрос поиска (без выбора режима)."""
     await state.set_state(MonitorState.query)
-    await message.answer(QUERY_HINT)
+    await message.answer(QUERY_HINT, reply_markup=field_chips())
+
+
+async def _ask_tags(message: Message, state: FSMContext):
+    """Переход к шагу «теги»: чипы быстрых тегов + Пропустить."""
+    data = await state.get_data()
+    await state.update_data(
+        query=data.get("query", ""),
+        field=data.get("field", ""),
+        mode=data.get("mode", "query"),
+    )
+    await state.set_state(MonitorState.tags)
+    await message.answer(
+        "Теги для классификации (быстрый выбор 👇 либо отправьте свои "
+        "через запятую):\n<code>криптовалюта, технологии</code>",
+        reply_markup=tags_chips(),
+    )
+
+
+@router.callback_query(F.data.startswith("qm:field:"))
+async def pick_field(callback: CallbackQuery, state: FSMContext):
+    """Выбор поля поиска чипом (ФИО/телефон/email/ИНН/паспорт/авто)."""
+    field = (callback.data or "").split(":", 2)[-1]
+    await state.update_data(field=field)
+    await state.set_state(MonitorState.fieldvalue)
+    await callback.answer()
+    if field:
+        title = FIELD_TITLES.get(field, "Поиск")
+        await callback.message.answer(
+            f"Отправьте значение для «{title}»:\n"
+            f"<code>{field}:…</code>"
+        )
+    else:
+        await callback.message.answer("Отправьте запрос для глобального поиска:")
+
+
+@router.message(MonitorState.fieldvalue)
+async def process_field_value(message: Message, state: FSMContext):
+    """Значение после выбора поля чипом."""
+    value = (message.text or "").strip()
+    if not value or value.startswith("/"):
+        await message.answer("Запрос не распознан. Отправьте текст или /cancel.")
+        return
+    data = await state.get_data()
+    await state.update_data(query=value, field=data.get("field", ""),
+                            mode=data.get("mode", "query"))
+    await _ask_tags(message, state)
 
 
 @router.message(MonitorState.query)
 async def process_query(message: Message, state: FSMContext):
-    """Обработка поискового запроса."""
+    """Обработка поискового запроса (с префиксом поля или свободного)."""
     query = (message.text or "").strip()
     if not query or query.startswith("/"):
         await message.answer("Запрос не распознан. Повторите.")
@@ -168,15 +265,22 @@ async def process_query(message: Message, state: FSMContext):
     data = await state.get_data()
     mode = data.get("mode", "query")
     await state.update_data(query=value, field=field, mode=mode)
-    await state.set_state(MonitorState.tags)
-    await message.answer(
-        "Отправьте теги для классификации через запятую:\n"
-        "<code>криптовалюта, технологии</code>\n\n"
-        "Или /skip — использовать сам запрос.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="mon:skiptags")],
-        ]),
-    )
+    await _ask_tags(message, state)
+
+
+@router.callback_query(F.data.startswith("qm:tag:"))
+async def pick_quick_tag(callback: CallbackQuery, state: FSMContext):
+    """Быстрый тег из чипов — сразу запуск мониторинга."""
+    label = (callback.data or "").split(":", 2)[-1]
+    data = await state.get_data()
+    await state.clear()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.answer()
+    await _finish(callback.message, data["query"], tags=[label],
+                  mode=data.get("mode", "query"), field=data.get("field", ""))
 
 
 @router.message(Command("skip"))
@@ -196,7 +300,10 @@ async def skip_tags(callback: CallbackQuery, state: FSMContext):
     """Пропуск тегов — возьмём сам запрос."""
     data = await state.get_data()
     await state.clear()
-    await callback.message.edit_reply_markup(reply_markup=None)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     await callback.answer()
     await _finish(callback.message, data["query"], tags=[data["query"]],
                   mode=data.get("mode", "query"), field=data.get("field", ""))
@@ -204,7 +311,7 @@ async def skip_tags(callback: CallbackQuery, state: FSMContext):
 
 @router.message(MonitorState.tags)
 async def process_tags(message: Message, state: FSMContext):
-    """Обработка тегов и запуск мониторинга."""
+    """Обработка свободных тегов и запуск мониторинга."""
     tags = [t.strip() for t in (message.text or "").replace(",", "\n").split("\n") if t.strip()]
 
     if not tags:

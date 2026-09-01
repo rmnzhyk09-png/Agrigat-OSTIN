@@ -206,7 +206,12 @@ def _fmt(profile: DbProfile) -> str:
 async def cmd_profile(message: Message):
     """Поиск профиля по ФИО или телефону."""
     text = (message.text or "").strip()
-    query = text.replace("/profile", "").strip()
+    await run_profile(message, text.replace("/profile", "").strip())
+
+
+async def run_profile(message: Message, query: str):
+    """Поиск профиля (используется /profile и «живой» кнопкой меню)."""
+    query = (query or "").strip()
 
     if not query:
         await message.answer(
