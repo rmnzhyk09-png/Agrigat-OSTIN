@@ -50,9 +50,9 @@ class Settings:
         self.llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
         
         # Скрапинг
-        self.max_scrape_pages = int(os.getenv("MAX_SCRAPE_PAGES", "15"))
-        self.request_timeout = float(os.getenv("REQUEST_TIMEOUT", "20.0"))
-        self.rate_limit_per_second = float(os.getenv("RATE_LIMIT_PER_SECOND", "5.0"))
+        self.max_scrape_pages = _env_int("MAX_SCRAPE_PAGES", 15)
+        self.request_timeout = _env_float("REQUEST_TIMEOUT", 20.0)
+        self.rate_limit_per_second = _env_float("RATE_LIMIT_PER_SECOND", 5.0)
 
         # RSS-ленты для /find (через запятую в .env: RSS_FEEDS=url1,url2)
         self.rss_feeds = [u.strip() for u in os.getenv("RSS_FEEDS", "").split(",") if u.strip()]
@@ -82,7 +82,7 @@ class Settings:
         # Пусто = системный/проектный python.
         self.blackbird_python = os.getenv("BLACKBIRD_PYTHON", "").strip()
         # Максимальное время (сек) на один поиск Blackbird
-        self.blackbird_timeout = int(os.getenv("BLACKBIRD_TIMEOUT", "120"))
+        self.blackbird_timeout = _env_int("BLACKBIRD_TIMEOUT", 120)
 
     def validate(self) -> list[str]:
         """Проверяет обязательные настройки."""
@@ -90,6 +90,26 @@ class Settings:
         if not self.bot_token:
             errors.append("BOT_TOKEN не задан (обязательно)")
         return errors
+
+
+def _env_int(name: str, default: int) -> int:
+    """Безопасный int из env: битая переменная не роняет бот при импорте."""
+    raw = os.getenv(name, "").strip()
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        print(f"  ! {name} не число («{raw}») — использую по умолчанию {default}")
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Безопасный float из env (аналог _env_int)."""
+    raw = os.getenv(name, "").strip()
+    try:
+        return float(raw) if raw else default
+    except ValueError:
+        print(f"  ! {name} не число («{raw}») — использую по умолчанию {default}")
+        return default
 
 
 settings = Settings()

@@ -134,7 +134,10 @@ class DigestScheduler:
                                                 disable_web_page_preview=True)
                 except Exception as ex:
                     logger.warning("watch %s: не отправлено: %s", w.user_id, ex)
-                await repo.touch_watch(w.id)
+                try:
+                    await repo.touch_watch(w.id)
+                except Exception as ex:
+                    logger.warning("touch_watch %s: %s", w.id, ex)
 
 
 __all__ = ["DigestScheduler"]

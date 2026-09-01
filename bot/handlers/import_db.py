@@ -181,18 +181,22 @@ async def _download_from_url(url: str, dest: Path) -> tuple[bool, str]:
 
 async def _run_import(status: Message, dest: Path, filename: str,
                       source_url: str = ""):
-    """Общий прогон: импорт в БД + копия в Supabase Storage + отчёт."""
+    """Общий прогон: импорт в БД + копия в Supabase Storage + отчёт.
+
+    Временный файл удаляется в любом исходе (finally) — чтобы не копить диск.
+    """
     try:
         result = await import_database_file(dest, filename)
     except Exception as ex:
         logger.exception("import error")
         await status.edit_text(f"Ошибка импорта: {ex}")
+        _unlink(dest)
         return
 
     storage_note = ""
-    if not result.get("error") and source_url:
-        # копия загруженного файла в Supabase Storage (необязательно)
-        try:
+    try:
+        if not result.get("error") and source_url and dest.exists():
+            # копия загруженного файла в Supabase Storage (необязательно)
             from ..dbimport.store import SupabaseStore
             sb = SupabaseStore()
             if sb.enabled:
@@ -202,19 +206,23 @@ async def _run_import(status: Message, dest: Path, filename: str,
                 if file_url:
                     storage_note = ("💾 Копия файла в Supabase Storage:\n"
                                     f"{file_url}")
-        except Exception:
-            logger.warning("storage upload skipped", exc_info=True)
-        finally:
-            try:
-                dest.unlink(missing_ok=True)
-            except OSError:
-                pass
+    except Exception:
+        logger.warning("storage upload skipped", exc_info=True)
+    finally:
+        _unlink(dest)
 
     if "error" in result:
         await status.edit_text(result["error"])
         return
 
     await _render_report(status, filename, result, storage_note)
+
+
+def _unlink(path: Path):
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 async def _render_report(status: Message, filename: str, result: dict,

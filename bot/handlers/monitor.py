@@ -11,6 +11,7 @@
 Без префикса срабатывает автоопределение (ищем по всему).
 """
 import logging
+import asyncio
 
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -182,7 +183,8 @@ async def run_blackbird(message: Message, raw: str):
         return
     status = await message.answer(f"🕊 Blackbird: ищу аккаунты «{raw}»… "
                                   "(может занять до минуты)")
-    items = await search_blackbird(raw, as_email="@" in raw, limit=40)
+    # search_blackbird — синхронный (subprocess), иначе заморозит event loop
+    items = await asyncio.to_thread(search_blackbird, raw, "@" in raw, 40)
     await status.delete()
     if not items:
         await message.answer(f"🕊 <b>Blackbird: {raw}</b>\n\nНичего не найдено "
