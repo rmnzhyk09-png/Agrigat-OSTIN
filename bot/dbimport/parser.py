@@ -1,6 +1,7 @@
 """Разбор файла БД на записи: SQLite, CSV, JSON (в т.ч. Telegram export), XLSX,
 а также архивы (ZIP/RAR), текстовые файлы и .torrent раздачи."""
 import csv
+import io
 import json
 import logging
 import os
@@ -13,9 +14,12 @@ import zipfile
 from pathlib import Path
 
 from .schema import (
+    compose_loose_block,
     detect_vertical_matrix,
     has_contact_columns,
     horizontal_records,
+    infer_field,
+    looks_like_name,
     split_txt_records,
     summarize_contacts,
     vertical_matrix_records,
@@ -109,6 +113,11 @@ def parse_file(path: str | Path, filename: str = "", _depth: int = 0) -> tuple[d
             records = smart
         else:
             records = [{"text": ln} for ln in lines if ln.strip()]
+    elif rows and isinstance(rows[0], dict) and rows[0].get("_hdr"):
+        # Таблица без шапки: каждая строка уже собрана в запись-карточку
+        # парсером (flat rows). Просто убираем служебный маркер.
+        records = [{k: v for k, v in r.items() if k != "_hdr"}
+                   for r in rows if (r.get("text") or "").strip()]
     elif rows and isinstance(rows[0], dict) and has_contact_columns(rows[0].keys()):
         records = horizontal_records(rows, source)
     elif rows and isinstance(rows[0], dict) and detect_vertical_matrix(rows):
@@ -638,19 +647,90 @@ def _iter_sql_dump(path: Path) -> tuple[list[dict], str]:
     return rows, source
 
 
+def _decode_bytes(raw: bytes) -> str:
+    """Декодирует байты файла: честный UTF-8 → cp1251 → cp866 → latin-1.
+
+    Кириллические CSV часто лежат в cp1251/cp866 — раньше они читались как
+    UTF-8 с errors="replace" и «портились» (заголовки/данные → '�').
+    """
+    for enc in ("utf-8-sig", "cp1251", "cp866"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
+def _first_row_is_data(cells: list) -> bool:
+    """True, если первая строка таблицы — данные, а не шапка.
+
+    Раньше первый ряд XLSX/CSV всегда считался заголовком: если данных лежали
+    «горизонтально» без шапки (одна строка = один человек), первая запись
+    съедалась как названия колонок, и получались мусорные «разделы»
+    (например, «КОГУА Виталий», «+995...»).
+    """
+    nonempty = [str(c or "").strip() for c in cells]
+    nonempty = [c for c in nonempty if c]
+    if not nonempty or len(nonempty) < 2:
+        return False
+
+    # 1) ячейка с телефоном (>=7 цифр в одном месте) или email — явные данные
+    if any(len(re.findall(r"\d", c)) >= 7 for c in nonempty):
+        return True
+    if any(re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", c)
+           for c in nonempty):
+        return True
+
+    # 2) две+ ячейки, похожие на ФИО — тоже данные
+    name_cnt = sum(1 for c in nonempty if looks_like_name(c))
+    if name_cnt >= 2:
+        return True
+
+    # 3) заголовки — это короткие «слова», у данных больше цифр/запятых
+    known = sum(1 for c in nonempty if infer_field(c) is not None)
+    digit_ratio = sum(1 for c in nonempty if re.search(r"\d", c)) / len(nonempty)
+    comma_cnt = sum(1 for c in nonempty if "," in c)
+    avg_words = sum(len(c.split()) for c in nonempty) / len(nonempty)
+    if digit_ratio > 0.5:
+        return True
+    if known == 0 and name_cnt >= 1 and (comma_cnt >= 1 or avg_words > 1.6):
+        return True
+    return False
+
+
+def _flat_row_record(row: list) -> dict:
+    """Строка без шапки → запись-карточка (ФИО/телефон/email + остальное)."""
+    cells = [str(c or "").strip() for c in row]
+    cells = [c for c in cells if c]
+    rec = compose_loose_block(cells)
+    rec["_hdr"] = True
+    return rec
+
+
 def _iter_csv(path: Path) -> tuple[list[dict], str]:
     rows: list[dict] = []
     source = "csv"
-    with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
-        sample = f.read(4096)
-        f.seek(0)
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        except csv.Error:
-            dialect = csv.excel
-        for row in csv.DictReader(f, dialect=dialect):
-            if row and any((v or "").strip() for v in row.values()):
-                rows.append(row)
+    text = _decode_bytes(path.read_bytes())
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+
+    raw_rows = [row for row in csv.reader(io.StringIO(text), dialect=dialect)
+                if row and any((c or "").strip() for c in row)]
+    if not raw_rows:
+        return rows, source
+
+    if _first_row_is_data(raw_rows[0]):
+        # Бесшапочная «горизонтальная» таблица: строка = человек
+        return [_flat_row_record(row) for row in raw_rows], source
+
+    header = [(str(c).strip() or f"col{n}") for n, c in enumerate(raw_rows[0], 1)]
+    for row in raw_rows[1:]:
+        d = {header[i]: (row[i] if i < len(row) else "") for i in range(len(header))}
+        if any((v or "").strip() for v in d.values()):
+            rows.append(d)
     return rows, source
 
 
@@ -684,22 +764,30 @@ def _iter_xlsx(path: Path) -> tuple[list[dict], str]:
         logger.warning("openpyxl не установлен, .xlsx не поддержан")
         return [], "xlsx"
 
-    rows: list[dict] = []
     wb = load_workbook(str(path), read_only=True, data_only=True)
     ws = wb.active
     if ws is None:
         wb.close()
         return [], "xlsx"
-    header: list[str] = []
-    for idx, row in enumerate(ws.iter_rows(values_only=True)):
-        if idx == 0:
-            header = [str(cell).strip() if cell is not None else f"col{n}"
-                      for n, cell in enumerate(row, 1)]
-            continue
-        d = {header[n]: row[n] for n in range(min(len(header), len(row)))}
+    all_rows = [[(c if c is not None else "") for c in row]
+                for row in ws.iter_rows(values_only=True)]
+    wb.close()
+
+    nonempty = [row for row in all_rows
+                if any(str(c or "").strip() for c in row)]
+    if not nonempty:
+        return [], "xlsx"
+
+    if _first_row_is_data(nonempty[0]):
+        # Первая строка — данные (таблица без шапки): строка = человек
+        return [_flat_row_record(row) for row in nonempty], "xlsx"
+
+    rows: list[dict] = []
+    header = [(str(c).strip() or f"col{n}") for n, c in enumerate(nonempty[0], 1)]
+    for row in nonempty[1:]:
+        d = {header[i]: (row[i] if i < len(row) else "") for i in range(len(header))}
         if any((v or "") for v in d.values()):
             rows.append(d)
-    wb.close()
     return rows, "xlsx"
 
 

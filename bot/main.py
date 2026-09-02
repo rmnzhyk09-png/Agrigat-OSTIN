@@ -39,6 +39,7 @@ COMMANDS_MENU = [
     BotCommand(command="catalog", description="Каталог ботов и групп"),
     BotCommand(command="import", description="Импорт базы данных (файлом)"),
     BotCommand(command="import_url", description="Импорт по прямой ссылке"),
+    BotCommand(command="dbreset", description="Очистка БД для нового залива"),
     BotCommand(command="subscribe", description="Дайджест по тегам"),
     BotCommand(command="history", description="История операций"),
     BotCommand(command="report", description="Последний отчёт"),
@@ -71,6 +72,10 @@ async def on_startup(bot: Bot):
     except Exception as ex:
         logger.warning("Проверка Supabase не удалась: %s", ex)
     logger.info("Бот запущен. Пользователи: все команды доступны после /start")
+    if settings.owner_id:
+        logger.info("Владелец бота: user_id=%s (BOT_OWNER_ID)", settings.owner_id)
+    else:
+        logger.warning("BOT_OWNER_ID не задан — админ-команды (/dbreset) отключены")
 
 
 async def main():

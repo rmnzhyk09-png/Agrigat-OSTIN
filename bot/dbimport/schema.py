@@ -16,10 +16,12 @@ logger = logging.getLogger(__name__)
 
 # ---------- регулярные выражения ----------
 
-_PHONE_RE = re.compile(
-    r"(?:(?:\+7|8|7)[\s\-().]*)?"
-    r"\(?\d{3}\)?[\s\-().]*\d{3}[\s\-().]*\d{2}[\s\-().]*\d{2}"
-)
+# Телефонный «токен»: непрерывный кусок из цифр, пробелов, '-', '.' и скобок.
+# Единый проход вместо двух регексов: фрагмент RU-номера не съедает
+# международный номер («+7(912)… +995 514 03 33 99» больше не слипается).
+_PHONE_TOKEN_RE = re.compile(r"(?<![\d+.])[+\d][\d\s\-().]{6,19}(?![\d])")
+# Связки цифр с точками/слешами — почти наверняка даты, а не номера.
+_DATE_LIKE_RE = re.compile(r"(?:\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b)")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 
 # ФИО: 2–3 слова с заглавной буквы; допустимы инициалы «И.И.»
@@ -111,23 +113,27 @@ def infer_field(label: str):
 # ---------- контакты: телефон / email ----------
 
 def extract_phones(value) -> list[str]:
-    """Все номера в тексте, нормализованные в +7XXXXXXXXXX."""
+    """Все номера в тексте, нормализованные в +7XXXXXXXXXX / +CCXXXXXXXXX."""
     text = _clean(value)
     if not text:
         return []
     out: list[str] = []
     seen: set[str] = set()
-    for token in _PHONE_RE.findall(text):
-        digits = re.sub(r"\D", "", token or "")
-        if len(digits) == 10:
-            digits = "7" + digits
-        elif len(digits) == 11 and digits.startswith(("7", "8")):
-            digits = "7" + digits[1:]
-        elif len(digits) == 11:
-            digits = "7" + digits
+    for m in _PHONE_TOKEN_RE.finditer(text):
+        tok = m.group(0).strip()
+        digits = re.sub(r"\D", "", tok)
+        if len(digits) < 8 or len(digits) > 15:
+            continue
+        if _DATE_LIKE_RE.search(tok):
+            continue
+        if tok.startswith("+"):
+            p = "+" + digits
+        elif len(digits) == 10:
+            p = "+7" + digits
+        elif len(digits) == 11 and digits[0] in ("7", "8"):
+            p = "+7" + digits[1:]
         else:
             continue
-        p = "+" + digits
         if p not in seen:
             seen.add(p)
             out.append(p)

@@ -5,9 +5,12 @@ info_hash из оригинальных байтов info-словаря, что
 """
 import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
+
+from .schema import extract_emails, extract_phones, looks_like_name
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +95,38 @@ def _fmt_size(size: int) -> str:
     return f"{size:.1f} ПБ"
 
 
+def _uniq(items: list) -> list:
+    out: list = []
+    for it in items:
+        if it and it not in out:
+            out.append(it)
+    return out
+
+
+def _path_contacts(file_path: str) -> tuple[str, list[str], list[str]]:
+    """Из имени/пути файла раздачи вытаскивает ФИО, телефоны и email.
+
+    Дампы в торрентах часто названы как «_Фамилия_Имя_телефон_.txt» —
+    эти данные должны попадать в записи и профили, а не только в текст.
+    """
+    phones = extract_phones(file_path)
+    emails = extract_emails(file_path)
+    base = re.split(r"[\\/]+", file_path)[-1]
+    tokens = [t for t in re.split(r"[\\/_\-.\s]+", base) if t]
+    name_tokens = [t for t in tokens
+                   if re.fullmatch(r"[А-ЯЁA-Z][а-яёa-z]*(?:-[А-ЯЁA-Z][а-яёa-z]*)?", t)]
+    name = ""
+    for n in (3, 2):
+        for i in range(len(name_tokens) - n + 1):
+            cand = " ".join(name_tokens[i:i + n])
+            if looks_like_name(cand):
+                name = cand
+                break
+        if name:
+            break
+    return name, _uniq(phones), _uniq(emails)
+
+
 def parse_torrent(path: Path, filename: str = "") -> dict:
     """Метаданные .torrent: {name, total_size, files, trackers, created,
     info_hash, magnet, comment, record, file_records}."""
@@ -173,17 +208,26 @@ def parse_torrent(path: Path, filename: str = "") -> dict:
         "date": created_iso,
     }
 
-    file_records = [
-        {
+    file_records = []
+    for p, s in files[:100]:
+        fname, phones, emails = _path_contacts(p)
+        lines: list[str] = []
+        if fname:
+            lines.append(f"ФИО: {fname}")
+        for ph in phones:
+            lines.append(f"Телефон: {ph}")
+        for e in emails:
+            lines.append(f"Email: {e}")
+        lines.append(f"Файл в раздаче «{name}»: {p} ({_fmt_size(s)})")
+        file_records.append({
             "source": filename or path.name,
             "section": _SECT,
-            "author": "",
-            "text": f"Файл в раздаче «{name}»: {p} ({_fmt_size(s)})",
+            "author": fname or "",
+            "text": "\n".join(lines),
             "url": magnet,
             "date": created_iso,
-        }
-        for p, s in files[:100]
-    ]
+            "fields": {"name": fname, "phones": phones, "emails": emails},
+        })
 
     return {"meta": {
         "format": "torrent", "source": filename or path.name,

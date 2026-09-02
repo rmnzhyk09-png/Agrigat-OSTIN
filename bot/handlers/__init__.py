@@ -16,6 +16,7 @@ from .import_db import router as import_router
 from .fmt_menu import router as fmt_menu_router
 from .menu import router as menu_router
 from .profile import router as profile_router
+from .admin import router as admin_router
 
 
 def get_router() -> Router:
@@ -37,5 +38,6 @@ def get_router() -> Router:
     router.include_router(fmt_menu_router)
     router.include_router(menu_router)
     router.include_router(profile_router)
+    router.include_router(admin_router)
 
     return router

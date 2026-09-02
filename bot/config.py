@@ -20,6 +20,10 @@ class Settings:
         # Telegram
         self.bot_token = os.getenv("BOT_TOKEN", "")
 
+        # Владелец бота (Telegram user id) — для админ-команд, например /dbreset.
+        # 0 = владелец не задан, админ-команды отключены.
+        self.owner_id = _env_int("BOT_OWNER_ID", 0)
+
         # Прокси для бота (если провайдер блокирует api.telegram.org):
         # http://127.0.0.1:8080 или socks5://127.0.0.1:1080
         self.proxy_url = os.getenv("PROXY_URL", "")

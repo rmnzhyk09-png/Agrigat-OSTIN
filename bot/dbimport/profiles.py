@@ -20,11 +20,18 @@ def _norm(text) -> str:
 
 
 def _norm_phone(text) -> str | None:
-    digits = re.sub(r"\D", "", str(text or ""))
+    raw = str(text or "").strip()
+    digits = re.sub(r"\D", "", raw)
     if len(digits) == 10:
         digits = "7" + digits
     elif len(digits) == 11 and digits.startswith(("7", "8")):
         digits = "7" + digits[1:]
+    elif raw.startswith("+") and 8 <= len(digits) <= 15:
+        digits = "+" + digits
+        return digits
+    elif 8 <= len(digits) <= 15 and not raw.startswith("+"):
+        digits = "+" + digits
+        return digits
     else:
         return None
     return "+" + digits
