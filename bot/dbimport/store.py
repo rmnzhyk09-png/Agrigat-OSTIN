@@ -161,6 +161,97 @@ class SupabaseStore:
             skipped += len(rows) - (len(data) if isinstance(data, list) else 0)
         return inserted, skipped
 
+    async def insert_profiles(self, client: httpx.AsyncClient,
+                              profiles: list[dict]) -> tuple[int, int]:
+        """Записывает профили людей в Supabase db_profiles.
+
+        Дубли пропускаются по full_name (имя-ключ). Возвращает
+        (вставлено_новых, пропущено_дублей).
+        """
+        named = [p for p in profiles if (p.get("full_name") or "").strip()]
+        if not named:
+            return 0, len(profiles)
+        # имеющиеся full_name в Supabase
+        existing: set[str] = set()
+        try:
+            r = await client.get(self.url + "/db_profiles",
+                                 params={"select": "full_name"},
+                                 headers={**self._headers, "Range-Unit": "items",
+                                          "Range": "0-9999"})
+            if r.status_code < 400:
+                for row in r.json():
+                    if row.get("full_name"):
+                        existing.add(str(row["full_name"]).strip().lower())
+        except httpx.HTTPError:
+            pass
+
+        inserted = skipped = 0
+        for p in named:
+            name = str(p.get("full_name") or "").strip()
+            if not name:
+                continue
+            if name.lower() in existing:
+                skipped += 1
+                continue
+            existing.add(name.lower())
+            payload = {
+                "full_name": name,
+                "surname": p.get("surname") or "",
+                "first_name": p.get("first_name") or "",
+                "patronymic": p.get("patronymic") or "",
+                "gender": p.get("gender") or "",
+                "date_of_birth": p.get("date_of_birth") or "",
+                "citizenship": p.get("citizenship") or "",
+                "place_of_birth": p.get("place_of_birth") or "",
+                "passport_series": p.get("passport_series") or "",
+                "passport_number": p.get("passport_number") or "",
+                "passport_issued_by": p.get("passport_issued_by") or "",
+                "inn": p.get("inn") or "",
+                "snils": p.get("snils") or "",
+                "driver_license": p.get("driver_license") or "",
+                "registration_address": p.get("registration_address") or "",
+                "actual_address": p.get("actual_address") or "",
+                "phones": p.get("phones") or [],
+                "emails": p.get("emails") or [],
+                "telegram": p.get("telegram"),
+                "social_handles": p.get("social_handles"),
+                "relatives": p.get("relatives"),
+                "business_partners": p.get("business_partners"),
+                "vk_url": p.get("vk_url") or "",
+                "instagram_url": p.get("instagram_url") or "",
+                "facebook_url": p.get("facebook_url") or "",
+                "real_estate": p.get("real_estate"),
+                "vehicles": p.get("vehicles"),
+                "court_cases": p.get("court_cases"),
+                "court_cases_count": len(p.get("court_cases") or []),
+                "enforcement_proceedings": p.get("enforcement_proceedings"),
+                "criminal_record": bool(p.get("criminal_record")),
+                "tax_debt_total": p.get("tax_debt_total") or "",
+                "bankruptcy_status": p.get("bankruptcy_status") or "",
+                "account_arrests": p.get("account_arrests"),
+                "current_employer": p.get("current_employer") or "",
+                "employer_inn": p.get("employer_inn") or "",
+                "position": p.get("position") or "",
+                "businesses": p.get("businesses"),
+                "exit_ban": bool(p.get("exit_ban")),
+                "disqualified": bool(p.get("disqualified")),
+                "efrsb_status": p.get("efrsb_status") or "",
+                "source_files": p.get("source_files"),
+                "import_ids": p.get("import_ids"),
+                "overall_confidence": p.get("overall_confidence") or "",
+                "raw_profile": p,
+            }
+            payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
+            r = await client.post(self.url + "/db_profiles", json=[payload],
+                                  headers={**self._headers, "Prefer": "return=minimal"})
+            if r.status_code < 400:
+                inserted += 1
+            else:
+                logger.warning("supabase insert profile %s: %s %s",
+                               name, r.status_code, r.text[:120])
+                skipped += 1
+        return inserted, skipped
+
 
     # ---------- Supabase Storage (хранение загруженных файлов) ----------
 
@@ -327,25 +418,21 @@ def _mirror_local(meta: dict, records: list[dict], sections_found: int,
 
 # ---------- профили ----------
 
-def _extract_and_save_profiles(records: list[dict], import_id: int,
-                                filename: str = "") -> int:
-    """Извлекает профили из записей и сохраняет/обновляет в db_profiles.
+def _build_merged_profiles(records: list[dict], filename: str = "") -> list[dict]:
+    """Извлекает профили из записей и объединяет дубли по ФИО.
 
-    Возвращает количество созданных/обновлённых профилей.
+    Возвращает список merged-профилей (dict). Без сохранения в БД.
     """
     if not records:
-        return 0
-
+        return []
     profiles: list[dict] = []
     for rec in records:
         p = build_profile_from_record(rec, filename)
         if p.get("full_name") or p.get("phones"):
             profiles.append(p)
-
     if not profiles:
-        return 0
+        return []
 
-    # Группируем по ФИО (lowercase) для объединения записей об одном человеке
     by_name: dict[str, list[dict]] = {}
     unnamed: list[dict] = []
     for p in profiles:
@@ -357,10 +444,20 @@ def _extract_and_save_profiles(records: list[dict], import_id: int,
 
     merged: list[dict] = []
     for name, group in by_name.items():
-        m = merge_profiles(group)
-        merged.append(m)
-    for p in unnamed:
-        merged.append(p)
+        merged.append(merge_profiles(group))
+    merged.extend(unnamed)
+    return merged
+
+
+def _extract_and_save_profiles(records: list[dict], import_id: int,
+                                filename: str = "") -> int:
+    """Извлекает профили из записей и сохраняет/обновляет в db_profiles.
+
+    Возвращает количество созданных/обновлённых профилей.
+    """
+    merged = _build_merged_profiles(records, filename)
+    if not merged:
+        return 0
 
     saved = 0
     try:
@@ -485,6 +582,30 @@ def _extract_and_save_profiles(records: list[dict], import_id: int,
 
 # ---------- точка входа ----------
 
+async def _push_profiles_supabase(records: list[dict], filename: str = "",
+                                  sb: "SupabaseStore" = None) -> int:
+    """Собирает merged-профили из записей и пишет их в Supabase db_profiles.
+
+    Возвращает число вставленных профилей. Лучший-effort: при ошибке не роняет импорт.
+    """
+    if not records:
+        return 0
+    merged = await asyncio.to_thread(_build_merged_profiles, records, filename)
+    if not merged:
+        return 0
+    if sb is None:
+        sb = SupabaseStore()
+    if not sb.enabled:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=60, headers=sb._headers) as client:
+            ins, _dup = await sb.insert_profiles(client, merged)
+            return ins
+    except (httpx.HTTPError, SupabaseError) as ex:
+        logger.warning("supabase profile push error: %s", ex)
+        return 0
+
+
 async def import_database_file(path, filename: str = "") -> dict:
     """Полный прогон: парсинг → классификация → сохранение. Возвращает отчёт."""
     try:
@@ -543,12 +664,21 @@ async def import_database_file(path, filename: str = "") -> dict:
         if fresh:
             local_import_id, _added, _skipped = await asyncio.to_thread(
                 _mirror_local, meta, fresh, len(sections), len(new_sections))
-            # Извлекаем профили из записей
+            # Извлекаем профили из записей (локальное зеркало)
             profiles_saved = await asyncio.to_thread(
                 _extract_and_save_profiles, fresh, local_import_id, filename,
             )
     except Exception:
         logger.exception("local mirror error")
+
+    # Профили людей — в Supabase db_profiles (для поиска профилей через бота).
+    # Пишет только новые (дубли по full_name пропускаются).
+    profiles_remote = 0
+    try:
+        if fresh and sb.enabled:
+            profiles_remote = await _push_profiles_supabase(fresh, filename, sb)
+    except Exception:
+        logger.exception("supabase profile push error")
 
     return {
         **meta,
@@ -560,4 +690,5 @@ async def import_database_file(path, filename: str = "") -> dict:
         "remote_note": remote_note,
         "supabase_configured": sb.enabled,
         "profiles_created": profiles_saved,
+        "profiles_remote": profiles_remote,
     }

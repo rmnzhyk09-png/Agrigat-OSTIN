@@ -356,13 +356,170 @@ def _profile_row_to_item(p: DbProfile) -> dict:
     }
 
 
+_PROFILE_SELECT = ("full_name,phones,emails,inn,snils,date_of_birth,registration_address,"
+                   "vk_url,instagram_url,telegram,overall_confidence,completeness_score,"
+                   "passport_series,passport_number,vehicles,court_cases_count,"
+                   "enforcement_debt_total,criminal_record,bankruptcy_status,exit_ban,"
+                   "current_employer,businesses,id")
+
+
+def _profile_row_to_item_supabase(row: dict) -> dict:
+    """Превращает строку db_profiles (Supabase) в запись-находку."""
+    phones = row.get("phones") if isinstance(row.get("phones"), list) else []
+    emails = row.get("emails") if isinstance(row.get("emails"), list) else []
+    full_name = row.get("full_name") or ""
+    telegram = row.get("telegram")
+    url = row.get("vk_url") or (telegram.get("url") if isinstance(telegram, dict) else "") or ""
+
+    text_parts = []
+    if full_name:
+        text_parts.append(f"ФИО: {full_name}")
+    if row.get("date_of_birth"):
+        text_parts.append(f"Дата рождения: {row['date_of_birth']}")
+    for ph in phones:
+        text_parts.append(f"Телефон: {ph}")
+    for e in emails:
+        text_parts.append(f"Email: {e}")
+    if row.get("registration_address"):
+        text_parts.append(f"Адрес: {row['registration_address']}")
+    if row.get("inn"):
+        text_parts.append(f"ИНН: {row['inn']}")
+    if row.get("passport_series") or row.get("passport_number"):
+        text_parts.append(f"Паспорт: {row.get('passport_series') or ''} {row.get('passport_number') or ''}".strip())
+    vehicles = row.get("vehicles") if isinstance(row.get("vehicles"), list) else []
+    for v in vehicles[:5]:
+        if isinstance(v, dict):
+            plate = v.get("plate", "")
+            make = v.get("make", "")
+            text_parts.append(f"Авто: {make} {plate}".strip())
+    if row.get("court_cases_count"):
+        text_parts.append(f"Судебных дел: {row['court_cases_count']}")
+    if row.get("enforcement_debt_total"):
+        text_parts.append(f"Долги приставам: {row['enforcement_debt_total']} руб.")
+    if row.get("criminal_record"):
+        text_parts.append("Судимость: есть")
+    if row.get("bankruptcy_status"):
+        text_parts.append(f"Банкротство: {row['bankruptcy_status']}")
+    if row.get("exit_ban"):
+        text_parts.append("Ограничение на выезд: да")
+    if row.get("current_employer"):
+        text_parts.append(f"Работа: {row['current_employer']}")
+    biz = row.get("businesses") if isinstance(row.get("businesses"), list) else []
+    for b in biz[:5]:
+        if isinstance(b, dict):
+            text_parts.append(f"Бизнес: {b.get('name', '')} ({b.get('role', '')})")
+
+    text = "\n".join(text_parts)
+    return {
+        "id": f"profile:{row.get('id')}",
+        "post_id": f"profile:{row.get('id')}",
+        "platform": "profile",
+        "author": full_name or "",
+        "url": url or "",
+        "text": text,
+        "published_at": row.get("date_of_birth") or "",
+        "score": 1.0 if full_name else 0.8,
+        "profile": {
+            "full_name": full_name,
+            "phones": phones,
+            "emails": emails,
+            "telegram": telegram,
+            "vk_url": row.get("vk_url") or "",
+            "instagram_url": row.get("instagram_url") or "",
+            "registration_address": row.get("registration_address") or "",
+            "inn": row.get("inn") or "",
+            "snils": row.get("snils") or "",
+            "confidence": row.get("overall_confidence") or "",
+            "completeness": row.get("completeness_score") or "",
+        },
+    }
+
+
+async def _search_profiles_supabase(query: str, limit: int = 5,
+                                    field: str = "") -> list[dict]:
+    """Ищет профили в Supabase db_profiles через PostgREST."""
+    sb = SupabaseStore()
+    q = (query or "").strip()
+    if not (sb.enabled and q):
+        return []
+    qs = _sanitize(q)
+    digits = "".join(c for c in q if c.isdigit())
+
+    params: dict = {"select": _PROFILE_SELECT, "limit": str(limit)}
+    if field in ("phone", "тел", "телефон") and digits:
+        p = f"{digits}"
+        params["phones"] = f"cs.[{p}]"
+    elif field in ("email", "почта"):
+        params["emails"] = f"cs.[{q.lower()}]"
+    elif field in ("name", "имя", "фио", "фамилия"):
+        params["full_name"] = f"ilike.*{qs}*"
+    elif field in ("inn", "иин"):
+        params["inn"] = f"eq.{qs}"
+    elif field == "passport":
+        params["or"] = f"(passport_series.ilike.*{qs}*,passport_number.ilike.*{qs}*)"
+    elif field in ("auto", "авто", "госномер"):
+        # госномер/vin в JSON vehicles — фильтруем в Python из расширенной выборки
+        qplate = q.upper().replace(" ", "")
+        params2 = dict(params)
+        params2["select"] = _PROFILE_SELECT
+        try:
+            async with httpx.AsyncClient(timeout=30, headers=sb._headers) as client:
+                r = await client.get(sb.url + "/db_profiles", params={
+                    **params2, "limit": "200"})
+                r.raise_for_status()
+            out = []
+            for row in r.json():
+                vehicles = row.get("vehicles") if isinstance(row.get("vehicles"), list) else []
+                for v in vehicles:
+                    if isinstance(v, dict) and qplate and \
+                       qplate in str(v.get("plate") or "").upper():
+                        out.append(_profile_row_to_item_supabase(row))
+                        break
+                if len(out) >= limit:
+                    break
+            return out
+        except (httpx.HTTPError, ValueError) as ex:
+            logger.debug("supabase profile auto: %s", ex)
+            return []
+    else:
+        # без тега — ищем по ФИО / имени / телефону / email
+        ors = [f"full_name.ilike.*{qs}*"]
+        if digits:
+            ors.append(f"phones.cs.[{digits}]")
+        if "@" in q:
+            ors.append(f"emails.cs.[{q.lower()}]")
+        params["or"] = f"({','.join(ors)})"
+
+    try:
+        async with httpx.AsyncClient(timeout=30, headers=sb._headers) as client:
+            r = await client.get(sb.url + "/db_profiles", params=params)
+            r.raise_for_status()
+            rows = r.json()
+            if not isinstance(rows, list):
+                return []
+            return [_profile_row_to_item_supabase(row) for row in rows]
+    except (httpx.HTTPError, ValueError) as ex:
+        logger.debug("supabase profile search: %s", ex)
+        return []
+
+
 async def search_profiles(query: str, limit: int = 5, field: str = "") -> list[dict]:
     """Профили людей из db_profiles по запросу (ФИО/телефон/email/ИНН и др.).
 
     field — тип идентификатора: name/phone/email/inn/passport/snils/auto.
+    Приоритет — Supabase (db_profiles); иначе локальное зеркало на сервере.
     """
     if not (query or "").strip():
         return []
+    sb = SupabaseStore()
+    if sb.enabled:
+        try:
+            res = await _search_profiles_supabase(query, limit, field)
+            if res:
+                return res
+            return []
+        except (httpx.HTTPError, ValueError) as ex:
+            logger.warning("supabase profile search fallback to local: %s", ex)
     return await asyncio.to_thread(_search_profiles_local, query, limit, field)
 
 
@@ -490,11 +647,79 @@ def _search_related_local(identifiers: dict, hit_profile_ids: set,
     return list(related.values())
 
 
+async def _search_related_supabase(identifiers: dict, hit_profile_ids: set,
+                                   hit_record_ids: set) -> list[dict]:
+    """Связанные записи/профили в Supabase по телефонам/email/ИНН/авто."""
+    sb = SupabaseStore()
+    if not sb.enabled:
+        return []
+    phones = identifiers.get("phones") or []
+    emails = identifiers.get("emails") or []
+    inns = identifiers.get("inns") or []
+    plates = identifiers.get("plates") or []
+    terms = [t for t in (list(phones) + list(emails) + list(inns) + list(plates)) if t][:20]
+    if not terms:
+        return []
+
+    related: dict[str, dict] = {}
+
+    async with httpx.AsyncClient(timeout=30, headers=sb._headers) as client:
+        # 1) профили Supabase, делящие телефон/email/ИНН
+        ors = []
+        for p in phones:
+            digits = "".join(c for c in p if c.isdigit())
+            if digits:
+                ors.append(f"phones.cs.[{digits}]")
+        for e in emails:
+            if e:
+                ors.append(f"emails.cs.[{e.lower()}]")
+        for inn in inns:
+            if inn:
+                ors.append(f"inn.eq.{inn}")
+        if ors:
+            try:
+                r = await client.get(sb.url + "/db_profiles",
+                                     params={"select": _PROFILE_SELECT,
+                                             "or": f"({','.join(ors)})",
+                                             "limit": "100"})
+                if r.status_code < 400:
+                    for row in r.json():
+                        pid = str(row.get("id"))
+                        if pid in hit_profile_ids or f"profile:{pid}" in related:
+                            continue
+                        related[f"profile:{pid}"] = _profile_row_to_item_supabase(row)
+            except (httpx.HTTPError, ValueError) as ex:
+                logger.debug("related profiles: %s", ex)
+
+        # 2) записи db_records Supabase, содержащие те же контакты/ИНН/номер
+        if terms:
+            ors_rec = []
+            for t in terms:
+                ors_rec.append(f"text.ilike.*{_sanitize(t)}*")
+                ors_rec.append(f"author.ilike.*{_sanitize(t)}*")
+            try:
+                r = await client.get(sb.url + "/db_records",
+                                     params={"select": _SELECT,
+                                             "or": f"({','.join(ors_rec)})",
+                                             "order": _ORDER, "limit": "100"})
+                if r.status_code < 400:
+                    for row in r.json():
+                        ck = str(row.get("checksum") or row.get("id"))
+                        if ck in hit_record_ids or f"db:{ck}" in related:
+                            continue
+                        related[f"db:{ck}"] = _to_item(row)
+            except (httpx.HTTPError, ValueError) as ex:
+                logger.debug("related records: %s", ex)
+
+    return list(related.values())
+
+
 async def search_related(records: list[dict], profiles: list[dict]) -> list[dict]:
     """Связанные записи/профили: перекрёстные данные по контактам и ИНН.
 
     Принимает найденные записи и профили, вытаскивает из них телефоны/email/
     ИНН/номера авто/адреса и ищет другие сущности, которые их разделяют.
+    Приоритет — Supabase (после заливки папки источник истины там).
     """
     identifiers = _collect_identifiers(records, profiles)
     hit_profile_ids = {str(p.get("id", "")).replace("profile:", "") for p in profiles}
@@ -507,6 +732,16 @@ async def search_related(records: list[dict], profiles: list[dict]) -> list[dict
                            or identifiers["addresses"])
     if not has_identifiers:
         return []
+
+    sb = SupabaseStore()
+    if sb.enabled:
+        try:
+            res = await _search_related_supabase(identifiers, hit_profile_ids,
+                                                hit_record_ids)
+            if res:
+                return res
+        except (httpx.HTTPError, ValueError) as ex:
+            logger.warning("supabase related fallback to local: %s", ex)
 
     return await asyncio.to_thread(
         _search_related_local, identifiers, hit_profile_ids, hit_record_ids)

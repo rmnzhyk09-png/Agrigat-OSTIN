@@ -8,6 +8,7 @@ from .analysis import classify_items, analyze_sentiment
 from .reporting import generate_summary
 from .dbimport.query import search_imported, search_profiles, search_related
 from .services.blackbird import search_blackbird, PLATFORM as BB_PLATFORM
+from .services.datatech import search_datatech, PLATFORM as DT_PLATFORM
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,23 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
                 logger.info("blackbird: +%s найденных аккаунтов", len(bb_items))
         except Exception as ex:
             logger.warning("blackbird: %s", ex)
+
+    # DataTech — параллельный поиск по внешним базам (если задан DATATECH_API_KEY).
+    if nickname and mode in ("query", "profile") and not field:
+        try:
+            dt_items = await search_datatech(nickname, limit=10)
+            seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
+                    for it in items}
+            for it in dt_items:
+                key = it.get("url") or f"{DT_PLATFORM}:{it.get('id')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(it)
+            if dt_items:
+                logger.info("datatech: +%s записей", len(dt_items))
+        except Exception as ex:
+            logger.warning("datatech: %s", ex)
 
     # Глубокий парсинг: полные тексты топовых страниц из веб-поиска
     if mode == "query" and not field:

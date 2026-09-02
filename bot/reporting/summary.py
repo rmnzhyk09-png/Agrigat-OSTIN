@@ -8,6 +8,7 @@ PLATFORM_NAMES = {
     "db": "База импорта",
     "profile": "Профиль человека",
     "blackbird": "Blackbird",
+    "datatech": "DataTech",
 }
 
 

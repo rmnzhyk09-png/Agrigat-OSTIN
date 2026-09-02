@@ -88,6 +88,13 @@ class Settings:
         # Максимальное время (сек) на один поиск Blackbird
         self.blackbird_timeout = _env_int("BLACKBIRD_TIMEOUT", 120)
 
+        # DataTech — параллельный поиск по внешним базам (best-effort API).
+        # Пусто = не подключён. Задайте DATATECH_API_KEY (и при необходимости
+        # DATATECH_BASE_URL / DATATECH_MODE) чтобы включить.
+        self.datatech_api_key = os.getenv("DATATECH_API_KEY", "").strip()
+        self.datatech_base_url = os.getenv("DATATECH_BASE_URL", "").strip()
+        self.datatech_mode = os.getenv("DATATECH_MODE", "auto").strip()
+
     def validate(self) -> list[str]:
         """Проверяет обязательные настройки."""
         errors = []
