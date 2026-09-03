@@ -8,13 +8,32 @@
    "url": "https://github.com/OSINT-PROBIV/Probiv_bot_list",
    "stars": 102
   },
-  {
-   "id": "probiv_osint_catalog",
-   "name": "probiv_OSINT_catalog (OSINT-check)",
-   "url": "https://github.com/OSINT-check/probiv_OSINT_catalog",
-   "stars": 22
-  }
- ],
+{
+    "id": "probiv_osint_catalog",
+    "name": "probiv_OSINT_catalog (OSINT-check)",
+    "url": "https://github.com/OSINT-check/probiv_OSINT_catalog",
+    "stars": 22
+   },
+   {
+    "id": "snoop",
+    "name": "Snoop (snooppr/snoop) — username presence-check по 400+ сайтам",
+    "url": "https://github.com/snooppr/snoop",
+    "stars": 2100,
+    "type": "local_tool",
+    "desc": "Локальный OSINT-инструмент. Проверяет, зарегистрирован ли ник/username на 400+ сайтах, выдаёт прямые ссылки на профили. Подключается через SNOOP_DIR и встроен в общий поиск (tasks.run_monitoring).",
+    "categories": ["social", "username"],
+    "config": "SNOOP_DIR=<путь к snoop>; SNOOP_PYTHON=<опц. python>"
+   },
+   {
+    "id": "sherlock",
+    "name": "Sherlock (sherlock-project/sherlock) — поиск аккаунтов по username",
+    "url": "https://github.com/sherlock-project/sherlock",
+    "stars": 58000,
+    "type": "local_tool",
+    "desc": "Локальный OSINT-инструмент. Поиск аккаунтов по username на 300+ соцсетях. (Бот-обёртка: https://t.me/WBGJJ184bot). Подключается аналогично Snoop.",
+    "categories": ["social", "username"]
+   }
+  ],
  "categories": [
   {
    "id": "api",

@@ -9,6 +9,7 @@ from .reporting import generate_summary
 from .dbimport.query import search_imported, search_profiles, search_related
 from .services.blackbird import search_blackbird, PLATFORM as BB_PLATFORM
 from .services.datatech import search_datatech, PLATFORM as DT_PLATFORM
+from .services.snoop import search_snoop, PLATFORM as SN_PLATFORM
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,26 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
                 logger.info("datatech: +%s записей", len(dt_items))
         except Exception as ex:
             logger.warning("datatech: %s", ex)
+
+    # Snoop — username presence-check по 400+ сайтам (если задан SNOOP_DIR).
+    # Запускаем для коротких ников (не длинных фраз), в отдельном потоке.
+    if nickname and _want_blackbird(nickname, mode, field) and not field:
+        try:
+            sn_items = await asyncio.to_thread(
+                search_snoop, nickname,
+            )
+            seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
+                    for it in items}
+            for it in sn_items:
+                key = it.get("url") or f"{SN_PLATFORM}:{it.get('id')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(it)
+            if sn_items:
+                logger.info("snoop: +%s сайтов с ником", len(sn_items))
+        except Exception as ex:
+            logger.warning("snoop: %s", ex)
 
     # Глубокий парсинг: полные тексты топовых страниц из веб-поиска
     if mode == "query" and not field:

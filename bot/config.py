@@ -95,6 +95,13 @@ class Settings:
         self.datatech_base_url = os.getenv("DATATECH_BASE_URL", "").strip()
         self.datatech_mode = os.getenv("DATATECH_MODE", "auto").strip()
 
+        # Snoop — OSINT username presence-check по 400+ сайтам
+        # (https://github.com/snooppr/snoop). Запускается как отдельный процесс.
+        # SNOOP_DIR = папка со snoop-ом; SNOOP_PYTHON = (опц.) python для него.
+        self.snoop_dir = os.getenv("SNOOP_DIR", "").strip()
+        self.snoop_python = os.getenv("SNOOP_PYTHON", "").strip()
+        self.snoop_timeout = _env_int("SNOOP_TIMEOUT", 180)
+
     def validate(self) -> list[str]:
         """Проверяет обязательные настройки."""
         errors = []
