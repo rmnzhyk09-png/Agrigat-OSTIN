@@ -29,6 +29,13 @@ _FOUND_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Домены, недоступные из среды развёртывания (нац. блокировка / DPI / TLS-cut):
+# Instagram, YouTube, files.fm закрыты. Такие результаты заведомо бесполезны —
+# отбрасываем и не пытаемся по ним искать. Список берём из settings.blocked_hosts.
+def _is_blocked(url: str) -> bool:
+    u = (url or "").lower()
+    return any(h in u for h in settings.blocked_hosts)
+
 
 def _enabled() -> bool:
     return bool(settings.snoop_dir and (
@@ -72,6 +79,8 @@ def _parse_text(identifier: str, output: str) -> list[dict]:
         url = m.group("url").strip()
         if not url or url.endswith((".png", ".jpg")):
             continue
+        if _is_blocked(url):          # не показываем заблокированные сети
+            continue
         # Snoop печатает и "не найдено" сайты — берём строки, где есть ссылка-профиль.
         key = url.lower()
         if key in seen:
@@ -102,6 +111,8 @@ def _try_json(identifier: str, raw: str) -> list[dict]:
         if isinstance(found, list):
             for entry in found:
                 if isinstance(entry, str):
+                    if _is_blocked(entry):
+                        continue
                     items.append({
                         "platform": PLATFORM, "author": identifier,
                         "url": entry, "text": f"Snoop: {entry}", "score": 0.8,

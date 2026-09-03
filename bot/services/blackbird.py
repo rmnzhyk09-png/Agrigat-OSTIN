@@ -25,7 +25,16 @@ PLATFORM = "blackbird"
 # Пустая строка = искать по всем. Пример: 'cat=social'
 FILTER = os.getenv("BLACKBIRD_FILTER", "cat=social")
 
+# Домены, недоступные из среды развёртывания (нац. блокировка / DPI / TLS-cut).
+# Провайдер отбрасывает результаты с таких хостом и их не ищет. Берём из
+# config.settings.blocked_hosts (по умолчанию см. config.py), чтобы можно было
+# задать через переменную окружения BLOCKED_HOSTS.
 _FOUND_KEYS = ("name", "url")
+
+
+def _is_blocked(url: str) -> bool:
+    u = (url or "").lower()
+    return any(h in u for h in settings.blocked_hosts)
 
 
 def _enabled() -> bool:
@@ -140,6 +149,8 @@ def _load_results(identifier: str) -> list[dict]:
         if acc.get("status") != "FOUND":
             continue
         if not any(acc.get(k) for k in _FOUND_KEYS):
+            continue
+        if _is_blocked(acc.get("url", "")):
             continue
         items.append(_account_to_item(acc, identifier))
     return items

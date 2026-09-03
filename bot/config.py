@@ -101,6 +101,12 @@ class Settings:
         self.snoop_dir = os.getenv("SNOOP_DIR", "").strip()
         self.snoop_python = os.getenv("SNOOP_PYTHON", "").strip()
         self.snoop_timeout = _env_int("SNOOP_TIMEOUT", 180)
+        # Домены, по которым запрещено искать (заблокированы средой развёртывания).
+        self.blocked_hosts = [h.strip().lower() for h in
+                              os.getenv("BLOCKED_HOSTS",
+                                        "instagram.com,youtube.com,youtu.be,files.fm,"
+                                        "t.me,telegram.org,threads.net,tiktok.com")
+                              .split(",") if h.strip()]
 
     def validate(self) -> list[str]:
         """Проверяет обязательные настройки."""
