@@ -70,6 +70,9 @@ def field_chips() -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text="🔎 Глобальный поиск",
                                       callback_data="qm:field:")])
+    rows.append([
+        InlineKeyboardButton(text="❌ Отмена", callback_data="mon:cancel"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -83,8 +86,11 @@ def tags_chips() -> InlineKeyboardMarkup:
                                  callback_data=f"qm:tag:{t}")
             for t in pair
         ])
-    rows.append([InlineKeyboardButton(text="🚫 Пропустить",
-                                      callback_data="mon:skiptags")])
+    rows.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="mon:backfield"),
+        InlineKeyboardButton(text="🚫 Пропустить", callback_data="mon:skiptags"),
+    ])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="mon:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 QUERY_HINT = (
@@ -245,6 +251,8 @@ async def pick_field(callback: CallbackQuery, state: FSMContext):
 @router.message(MonitorState.fieldvalue)
 async def process_field_value(message: Message, state: FSMContext):
     """Значение после выбора поля чипом."""
+    if await _dispatch_button_text(message, state):
+        return
     value = (message.text or "").strip()
     if not value or value.startswith("/"):
         await message.answer("Запрос не распознан. Отправьте текст или /cancel.")
@@ -258,6 +266,8 @@ async def process_field_value(message: Message, state: FSMContext):
 @router.message(MonitorState.query)
 async def process_query(message: Message, state: FSMContext):
     """Обработка поискового запроса (с префиксом поля или свободного)."""
+    if await _dispatch_button_text(message, state):
+        return
     query = (message.text or "").strip()
     if not query or query.startswith("/"):
         await message.answer("Запрос не распознан. Повторите.")
@@ -314,6 +324,8 @@ async def skip_tags(callback: CallbackQuery, state: FSMContext):
 @router.message(MonitorState.tags)
 async def process_tags(message: Message, state: FSMContext):
     """Обработка свободных тегов и запуск мониторинга."""
+    if await _dispatch_button_text(message, state):
+        return
     tags = [t.strip() for t in (message.text or "").replace(",", "\n").split("\n") if t.strip()]
 
     if not tags:
@@ -324,3 +336,48 @@ async def process_tags(message: Message, state: FSMContext):
     await state.clear()
     await _finish(message, data["query"], tags=tags,
                   mode=data.get("mode", "query"), field=data.get("field", ""))
+
+
+# ---------- Навигация: назад / отмена ----------
+
+async def _cancel_dialog(message: Message, state: FSMContext):
+    """Отмена диалога — чистим FSM и открываем главное меню."""
+    await state.clear()
+    from .start import _send_help
+    await _send_help(message)
+
+
+async def _dispatch_button_text(message: Message, state: FSMContext) -> bool:
+    """Если сообщение — текст reply-кнопки главного меню, не даём ему стать
+    ошибочным запросом/тегом: чистим FSM и выполняем кнопку. Возвращает True."""
+    from .start import RU_BUTTONS, dispatch_menu
+    text = (message.text or "").strip()
+    if text in RU_BUTTONS:
+        await state.clear()
+        await dispatch_menu(message, state, RU_BUTTONS[text])
+        return True
+    return False
+
+
+@router.callback_query(F.data == "mon:cancel")
+async def cancel_monitor(callback: CallbackQuery, state: FSMContext):
+    """Отмена мониторинга — чистим состояние и возвращаем меню."""
+    await state.clear()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await _cancel_dialog(callback.message, state)
+    await callback.answer("Отменено.")
+
+
+@router.callback_query(F.data == "mon:backfield")
+async def back_to_field(callback: CallbackQuery, state: FSMContext):
+    """Назад с шага «теги» на шаг «запрос»."""
+    await state.set_state(MonitorState.query)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer("Повторите запрос:", reply_markup=field_chips())
+    await callback.answer()

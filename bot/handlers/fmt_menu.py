@@ -83,6 +83,24 @@ async def send_findings(message: Message, title: str,
         await message.answer(f"🕵️ <b>{_esc(title)}</b>\n\nНайдено: <b>0</b> совпадений")
         return
 
+    card_mode = _is_card_items(items)
+
+    if card_mode:
+        # Пробив по БД/профилям — показываем полные карточки, а не обрезки.
+        blocks = [f"🕵️ <b>{_esc(title)}</b>", "",
+                  f"Найдено: <b>{len(items)}</b> совпадений", ""]
+        shown = 0
+        for i, it in enumerate(items[:8], 1):
+            blocks.append(_card_text(it, i))
+            blocks.append("")
+            shown += 1
+        if len(items) > shown:
+            blocks.append(f"… и ещё <b>{len(items) - shown}</b> — «📋 Показать все находки»")
+        blocks += ["", "Сохранить результат в формате 👇"]
+        await message.answer("\n".join(blocks), parse_mode="HTML",
+                             disable_web_page_preview=True, reply_markup=_result_kb(True))
+        return
+
     lines = [f"🕵️ <b>{_esc(title)}</b>", "",
              f"Найдено: <b>{len(items)}</b> совпадений"]
 
@@ -118,7 +136,63 @@ async def send_findings(message: Message, title: str,
                          disable_web_page_preview=True, reply_markup=_result_kb(True))
 
 
-def _item_line(i: int, it: dict) -> str:
+def _is_card_items(items: list[dict]) -> bool:
+    """Пробивные результаты (профиль/БД-запись) — показываем полными карточками."""
+    if not items:
+        return False
+    for it in items:
+        plat = it.get("platform")
+        if plat in ("profile", "db", "datatech"):
+            return True
+        if it.get("profile"):
+            return True
+        text = it.get("text") or ""
+        if "ФИО:" in text or "Телефон:" in text or "Email:" in text or "ИНН:" in text:
+            return True
+    return False
+
+
+def _card_text(it: dict, i: int) -> str:
+    """Полная читаемая карточка находки (пробив)."""
+    text = _esc(it.get("text") or "")
+    lines = [f"<b>{i}.</b> {_esc(it.get('author') or it.get('platform') or 'Находка')}"]
+    for ln in (text or "").splitlines():
+        if not ln.strip():
+            continue
+        low = ln.strip().lower()
+        if low.startswith(("фио:", "телефон:", "email:", "инн:", "снилс:",
+                           "паспорт:", "адрес:", "дата рождения:", "авто:",
+                           "судебных дел:", "долги", "судимость", "банкротство",
+                           "ограничение на выезд", "работа:", "бизнес:")):
+            lines.append(f"   {ln.strip()}")
+        else:
+            lines.append(f"   {ln.strip()}")
+    url = it.get("url") or ""
+    if url and url.startswith(("http", "magnet:")):
+        lines.append(f"   🔗 <a href=\"{url}\">ссылка</a>")
+    return "\n".join(lines)
+
+
+async def _send_card_chunk(message: Message, title: str, items: list[dict],
+                           offset: int):
+    include = items[offset:offset + _PAGE]
+    blocks = [f"📋 <b>{_esc(title)}</b>"]
+    if include:
+        blocks.append("")
+        for j, it in enumerate(include, offset + 1):
+            blocks.append(_card_text(it, j))
+            blocks.append("")
+    blocks.append(f"Показано <b>{min(offset + _PAGE, len(items))}</b> из <b>{len(items)}</b>")
+
+    rows = []
+    if offset + _PAGE < len(items):
+        rows.append([{"text": f"Показать ещё ({len(items) - offset - _PAGE})",
+                      "callback_data": f"fmt:more:{offset + _PAGE}"}])
+    rows.append([{"text": "🚫 Закрыть", "callback_data": "fmt:closelist"}])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    await message.answer("\n".join(blocks), parse_mode="HTML",
+                         disable_web_page_preview=True, reply_markup=kb)
     url = it.get("url") or ""
     text = _esc((it.get("text") or "").replace("\n", " ")[:90])
     platform = _esc(it.get("platform") or "")
@@ -185,7 +259,10 @@ async def show_list(callback: CallbackQuery):
     if not items:
         await callback.answer("Ничего не найдено.")
         return
-    await _send_chunk(callback.message, title, items, 0)
+    if _is_card_items(items):
+        await _send_card_chunk(callback.message, title, items, 0)
+    else:
+        await _send_chunk(callback.message, title, items, 0)
     await callback.answer()
 
 
@@ -201,7 +278,10 @@ async def show_more(callback: CallbackQuery):
         offset = int((callback.data or "").split(":", 2)[-1])
     except (ValueError, IndexError):
         offset = 0
-    await _send_chunk(callback.message, title, items, offset)
+    if _is_card_items(items):
+        await _send_card_chunk(callback.message, title, items, offset)
+    else:
+        await _send_chunk(callback.message, title, items, offset)
     await callback.answer()
 
 

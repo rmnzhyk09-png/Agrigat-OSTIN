@@ -194,6 +194,13 @@ async def process_capture(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     data = await state.get_data()
     intent = data.get("intent", "")
+
+    # Кнопка reply-клавиатуры во время «живой» кнопки — не значение, а команда меню.
+    if text in RU_BUTTONS:
+        await state.clear()
+        await dispatch_menu(message, state, RU_BUTTONS[text])
+        return
+
     await state.clear()
 
     if not text or text.startswith("/"):
