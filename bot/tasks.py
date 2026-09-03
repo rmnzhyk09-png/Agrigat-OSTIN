@@ -110,63 +110,52 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     except Exception as ex:
         logger.warning("поиск по импортированной БД: %s", ex)
 
-    # Blackbird — OSINT reverse username/email поиск (если настроен BLACKBIRD_DIR).
-    # Запускаем в отдельном потоке (внутри — subprocess, не блокируя цикл событий).
-    if _want_blackbird(nickname, mode, field):
-        try:
-            bb_items = await asyncio.to_thread(
-                search_blackbird, nickname,
-                as_email=("@" in nickname),
-            )
-            seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
-                    for it in items}
-            for it in bb_items:
-                key = it.get("url") or f"{BB_PLATFORM}:{it.get('id')}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                items.append(it)
-            if bb_items:
-                logger.info("blackbird: +%s найденных аккаунтов", len(bb_items))
-        except Exception as ex:
-            logger.warning("blackbird: %s", ex)
+    # ── Мегапоиск: OSINT-провайдеры запускаются ПАРАЛЛЕЛЬНО ─────────────
+    # DataTech (async API), Blackbird (subprocess), Snoop (subprocess).
+    # Все идут одним asyncio.gather → каждый ищет независимо, результаты
+    # сливаются с дедупликацией. Отсутствие какого-то провайдера (нет ключа/
+    # DIR/сети) не мешает остальным — _enabled() калится внутри каждого.
+    async def _merge_partial(items: list[dict], got: list[dict], default_plat: str):
+        seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
+                for it in items}
+        added = 0
+        for it in got:
+            key = it.get("url") or f"{it.get('platform', default_plat)}:{it.get('id')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(it)
+            added += 1
+        return items, added
 
-    # DataTech — параллельный поиск по внешним базам (если задан DATATECH_API_KEY).
+    want_nick = _want_blackbird(nickname, mode, field)
+    providers: list[tuple] = []
+
+    if want_nick:
+        providers.append((asyncio.ensure_future(asyncio.to_thread(
+            search_blackbird, nickname, as_email=("@" in nickname))), BB_PLATFORM))
+
     if nickname and mode in ("query", "profile") and not field:
-        try:
-            dt_items = await search_datatech(nickname, limit=10)
-            seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
-                    for it in items}
-            for it in dt_items:
-                key = it.get("url") or f"{DT_PLATFORM}:{it.get('id')}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                items.append(it)
-            if dt_items:
-                logger.info("datatech: +%s записей", len(dt_items))
-        except Exception as ex:
-            logger.warning("datatech: %s", ex)
+        providers.append((asyncio.ensure_future(
+            search_datatech(nickname, limit=10)), DT_PLATFORM))
 
-    # Snoop — username presence-check по 400+ сайтам (если задан SNOOP_DIR).
-    # Запускаем для коротких ников (не длинных фраз), в отдельном потоке.
-    if nickname and _want_blackbird(nickname, mode, field) and not field:
+    if want_nick and not field:
+        providers.append((asyncio.ensure_future(
+            asyncio.to_thread(search_snoop, nickname)), SN_PLATFORM))
+
+    if providers:
         try:
-            sn_items = await asyncio.to_thread(
-                search_snoop, nickname,
-            )
-            seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
-                    for it in items}
-            for it in sn_items:
-                key = it.get("url") or f"{SN_PLATFORM}:{it.get('id')}"
-                if key in seen:
+            results = await asyncio.gather(
+                *[p[0] for p in providers], return_exceptions=True)
+            for got, plat in zip(results, [p[1] for p in providers]):
+                if isinstance(got, Exception):
+                    logger.warning("провайдер %s: %s", plat, got)
                     continue
-                seen.add(key)
-                items.append(it)
-            if sn_items:
-                logger.info("snoop: +%s сайтов с ником", len(sn_items))
+                _items, added = await _merge_partial(items, got or [], plat)
+                if added:
+                    logger.info("%s: +%s источников", plat, added)
         except Exception as ex:
-            logger.warning("snoop: %s", ex)
+            logger.warning("мегапоиск (провайдеры): %s", ex)
 
     # Глубокий парсинг: полные тексты топовых страниц из веб-поиска
     if mode == "query" and not field:
