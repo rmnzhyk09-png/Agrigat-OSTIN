@@ -171,6 +171,15 @@ class SupabaseStore:
         named = [p for p in profiles if (p.get("full_name") or "").strip()]
         if not named:
             return 0, len(profiles)
+        # Проверяем, что таблица db_profiles существует (иначе нет смысла
+        # долбить по каждой фамилии — вернём 404 за каждый POST).
+        try:
+            probe = await client.get(self.url + "/db_profiles",
+                                     params={"select": "full_name", "limit": "1"})
+            if probe.status_code == 404:  # таблицы нет — профили пропускаем
+                return 0, len(named)
+        except httpx.HTTPError:
+            return 0, len(named)
         # имеющиеся full_name в Supabase
         existing: set[str] = set()
         try:
@@ -186,6 +195,21 @@ class SupabaseStore:
             pass
 
         inserted = skipped = 0
+        batch: list[dict] = []
+        BATCH = 200
+        async def flush_batch():
+            nonlocal batch, inserted
+            if not batch:
+                return
+            r = await client.post(self.url + "/db_profiles", json=batch,
+                                  headers={**self._headers, "Prefer": "return=minimal"})
+            if r.status_code < 400:
+                inserted += len(batch)
+            else:
+                logger.warning("supabase insert profiles batch: %s %s",
+                               r.status_code, r.text[:200])
+            batch = []
+
         for p in named:
             name = str(p.get("full_name") or "").strip()
             if not name:
@@ -213,43 +237,38 @@ class SupabaseStore:
                 "actual_address": p.get("actual_address") or "",
                 "phones": p.get("phones") or [],
                 "emails": p.get("emails") or [],
-                "telegram": p.get("telegram"),
-                "social_handles": p.get("social_handles"),
-                "relatives": p.get("relatives"),
-                "business_partners": p.get("business_partners"),
+                "telegram": p.get("telegram") or "",
+                "social_handles": p.get("social_handles") or [],
+                "relatives": p.get("relatives") or [],
+                "business_partners": p.get("business_partners") or [],
                 "vk_url": p.get("vk_url") or "",
                 "instagram_url": p.get("instagram_url") or "",
                 "facebook_url": p.get("facebook_url") or "",
-                "real_estate": p.get("real_estate"),
-                "vehicles": p.get("vehicles"),
-                "court_cases": p.get("court_cases"),
+                "real_estate": p.get("real_estate") or [],
+                "vehicles": p.get("vehicles") or [],
+                "court_cases": p.get("court_cases") or [],
                 "court_cases_count": len(p.get("court_cases") or []),
-                "enforcement_proceedings": p.get("enforcement_proceedings"),
+                "enforcement_proceedings": p.get("enforcement_proceedings") or [],
                 "criminal_record": bool(p.get("criminal_record")),
-                "tax_debt_total": p.get("tax_debt_total") or "",
+                "tax_debt_total": p.get("tax_debt_total") or None,
                 "bankruptcy_status": p.get("bankruptcy_status") or "",
-                "account_arrests": p.get("account_arrests"),
+                "account_arrests": p.get("account_arrests") or [],
                 "current_employer": p.get("current_employer") or "",
                 "employer_inn": p.get("employer_inn") or "",
                 "position": p.get("position") or "",
-                "businesses": p.get("businesses"),
+                "businesses": p.get("businesses") or [],
                 "exit_ban": bool(p.get("exit_ban")),
                 "disqualified": bool(p.get("disqualified")),
                 "efrsb_status": p.get("efrsb_status") or "",
-                "source_files": p.get("source_files"),
-                "import_ids": p.get("import_ids"),
+                "source_files": p.get("source_files") or [],
+                "import_ids": p.get("import_ids") or [],
                 "overall_confidence": p.get("overall_confidence") or "",
-                "raw_profile": p,
             }
-            payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
-            r = await client.post(self.url + "/db_profiles", json=[payload],
-                                  headers={**self._headers, "Prefer": "return=minimal"})
-            if r.status_code < 400:
-                inserted += 1
-            else:
-                logger.warning("supabase insert profile %s: %s %s",
-                               name, r.status_code, r.text[:120])
-                skipped += 1
+            batch.append(payload)
+            if len(batch) >= BATCH:
+                await flush_batch()
+
+        await flush_batch()
         return inserted, skipped
 
 

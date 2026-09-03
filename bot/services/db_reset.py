@@ -79,14 +79,23 @@ async def _wipe_remote(client: httpx.AsyncClient, sb: SupabaseStore) -> dict:
                         total = int(cr.rsplit("/", 1)[1])
                     except ValueError:
                         total = 0
-            # Постгрес-инкремент id всегда >= 1, поэтому id=gte.0 снимает всё
-            d = await client.delete(
-                f"{sb.url}/{table}",
-                params={"id": "gte.0"},
-                headers={**sb._headers, "Prefer": "return=minimal"},
-            )
-            if d.status_code >= 400:
-                logger.warning("dbreset: удалить все строки %s: %s (%s)",
+            # Снять все строки целиком. PostgREST не разрешает DELETE без условия, а
+# фильтр требует значение ТИПА ключа (uuid у db_profiles/db_records,
+# bigint у db_sections/db_imports). Поэтому пробуем по очереди подходящие
+# sentinel-значения; первый успешный HTTP в диапазоне 2xx снимает все строки.
+            sentinels = ["00000000-0000-0000-0000-000000000000", "0", "-1", "nope"]
+            deleted = False
+            for sentinel in sentinels:
+                d = await client.delete(
+                    f"{sb.url}/{table}",
+                    params={"id": f"neq.{sentinel}"},
+                    headers={**sb._headers, "Prefer": "return=minimal"},
+                )
+                if d.status_code < 400:
+                    deleted = True
+                    break
+            if not deleted:
+                logger.warning("dbreset: удалить все строки %s: последняя попытка %s (%s)",
                                table, d.status_code, d.text[:200])
                 counts[key] = 0
             else:
