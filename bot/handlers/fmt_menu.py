@@ -19,8 +19,6 @@ from aiogram.types import (
 )
 
 from ..reporting import generate_json, generate_csv, generate_markdown
-from ..reporting.charts import generate_chart_png
-from ..reporting.pdf import generate_pdf
 from ..reporting.summary import PLATFORM_NAMES
 from ..db import repo
 
@@ -29,6 +27,11 @@ router = Router()
 
 _TTL = 30 * 60       # результаты живут полчаса
 _PAGE = 15           # находок на одной странице списка
+
+# In-memory fallback на случай отказа БД (это гарантирует, что файл уйдет),
+# даже если локальное хранилище на сервере недоступно.
+_MEM = {}
+_MEM_CREATED = {}
 
 _FORMAT_ROWS = [
     [{"text": "📄 JSON", "callback_data": "fmt:json"},
@@ -44,6 +47,8 @@ _FMT_CHOICES = {"fmt:json", "fmt:csv", "fmt:md", "fmt:markdown",
 
 async def _store(user_id: int, chat_id: int, title: str,
                  items: list[dict], stats: dict):
+    _MEM[user_id] = (title, items, stats)
+    _MEM_CREATED[user_id] = _now_ts()
     try:
         await repo.save_format_result(user_id, chat_id, title, items, stats,
                                       ttl_seconds=_TTL)
@@ -52,11 +57,23 @@ async def _store(user_id: int, chat_id: int, title: str,
 
 
 async def _load(user_id: int):
+    mem = _MEM.get(user_id)
+    if mem:
+        ts = _MEM_CREATED.get(user_id, 0)
+        if _now_ts() - ts < _TTL:
+            return mem
+        _MEM.pop(user_id, None)
+        _MEM_CREATED.pop(user_id, None)
     try:
         return await repo.load_format_result(user_id, ttl_seconds=_TTL)
     except Exception as ex:
         logger.warning("не загрузить результат: %s", ex)
         return None
+
+
+def _now_ts() -> float:
+    import time
+    return time.time()
 
 
 def _esc(text) -> str:
@@ -193,18 +210,6 @@ async def _send_card_chunk(message: Message, title: str, items: list[dict],
 
     await message.answer("\n".join(blocks), parse_mode="HTML",
                          disable_web_page_preview=True, reply_markup=kb)
-    url = it.get("url") or ""
-    text = _esc((it.get("text") or "").replace("\n", " ")[:90])
-    platform = _esc(it.get("platform") or "")
-    line = f"{i}. [{platform}] "
-    if url.startswith(("http", "magnet:")):
-        line += f"<a href=\"{url}\">{text}</a>"
-    else:
-        line += text
-    author = (it.get("author") or "").strip()
-    if author:
-        line += f"\n    👤 {_esc(author)[:60]}"
-    return line
 
 
 async def _send_chunk(message: Message, title: str, items: list[dict],
@@ -324,6 +329,14 @@ async def process_format(callback: CallbackQuery):
                                   filename="result.md"),
                 caption=f"📑 Markdown «{_esc(title)}»")
         elif choice == "pdf":
+            try:
+                from ..reporting.pdf import generate_pdf
+            except Exception:
+                generate_pdf = None
+            if not generate_pdf:
+                await callback.answer("PDF-модуль не установлен на сервере.",
+                                      show_alert=True)
+                return
             blob = generate_pdf(items, stats, title)
             if not blob:
                 await callback.answer("PDF не собрался — попробуйте другой формат.",
@@ -333,6 +346,14 @@ async def process_format(callback: CallbackQuery):
                 BufferedInputFile(blob, filename="result.pdf"),
                 caption=f"📕 PDF «{_esc(title)}»")
         elif choice == "png":
+            try:
+                from ..reporting.charts import generate_chart_png
+            except Exception:
+                generate_chart_png = None
+            if not generate_chart_png:
+                await callback.answer("Графики не установлены на сервере.",
+                                      show_alert=True)
+                return
             blob = generate_chart_png(items, stats)
             if not blob:
                 await callback.answer("График не построился.", show_alert=True)
@@ -343,4 +364,7 @@ async def process_format(callback: CallbackQuery):
         await callback.answer("Файл отправлен")
     except Exception as ex:
         logger.warning("не удалось отправить %s: %s", choice, ex)
-        await callback.answer("Ошибка при отправке файла.", show_alert=True)
+        try:
+            await callback.answer("Ошибка при отправке файла.", show_alert=True)
+        except Exception:
+            logger.debug("не ответить на callback: %s", ex)
