@@ -18,3 +18,11 @@ services:
         sync: false
       - key: SUPABASE_ACCESS_TOKEN
         sync: false
+      - key: HIMERA_API_KEY
+        sync: false
+      - key: HIMERA_BASE_URL
+        sync: false
+      - key: HIMERA_MAX_REQUESTS
+        sync: false
+      - key: DB_LOCAL_WINDOW
+        sync: false

@@ -18,6 +18,51 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _esc_name(pf: dict) -> str:
+    name = pf.get("full_name") or "Без имени"
+    return name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _fmt_supabase(pf: dict) -> str:
+    """Форматирует профиль из Supabase (dict) в читаемое сообщение."""
+    lines = []
+    if pf.get("date_of_birth"):
+        lines.append(f"Дата рождения: {pf['date_of_birth']}")
+    phones = pf.get("phones") or []
+    if phones:
+        lines.append("Телефоны: " + ", ".join(phones))
+    emails = pf.get("emails") or []
+    if emails:
+        lines.append("Email: " + ", ".join(emails))
+    if pf.get("registration_address"):
+        lines.append(f"Адрес: {pf['registration_address']}")
+    if pf.get("inn"):
+        lines.append(f"ИНН: {pf['inn']}")
+    if pf.get("snils"):
+        lines.append(f"СНИЛС: {pf['snils']}")
+    if pf.get("passport_series") or pf.get("passport_number"):
+        lines.append(f"Паспорт: {(pf.get('passport_series') or '')} {(pf.get('passport_number') or '')}".strip())
+    vehicles = pf.get("vehicles") or []
+    for v in vehicles[:3]:
+        if isinstance(v, dict):
+            lines.append(f"Авто: {v.get('make', '')} {v.get('plate', '')}".strip())
+    if pf.get("court_cases_count"):
+        lines.append(f"Судебных дел: {pf['court_cases_count']}")
+    if pf.get("enforcement_debt_total"):
+        lines.append(f"Долги приставам: {pf['enforcement_debt_total']} руб.")
+    if pf.get("criminal_record"):
+        lines.append("Судимость: есть")
+    if pf.get("bankruptcy_status"):
+        lines.append(f"Банкротство: {pf['bankruptcy_status']}")
+    if pf.get("current_employer"):
+        lines.append(f"Работа: {pf['current_employer']}")
+    confidence = pf.get("confidence") or ""
+    if confidence:
+        emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(confidence, "⚪")
+        lines.append(f"\nДостоверность: {emoji} {confidence}")
+    return "\n".join(lines)
+
+
 def _fmt(profile: DbProfile) -> str:
     """Форматирует профиль в читаемое сообщение."""
     lines = []
@@ -211,8 +256,10 @@ async def cmd_profile(message: Message):
 
 async def run_profile(message: Message, query: str):
     """Поиск профиля (используется /profile и «живой» кнопкой меню)."""
-    query = (query or "").strip()
+    from ..dbimport.query import search_profiles, parse_search_field
+    from ..dbimport.store import SupabaseStore
 
+    query = (query or "").strip()
     if not query:
         await message.answer(
             "Поиск профиля: <code>/profile Иванов</code>\n\n"
@@ -225,49 +272,16 @@ async def run_profile(message: Message, query: str):
         )
         return
 
-    results: list[DbProfile] = []
+    field, value = parse_search_field(query)
+    items = []
     try:
-        with SyncSessionLocal() as session:
-            # Поиск по ФИО (частичный, регистронезависимый)
-            q = f"%{query}%"
-            by_name = session.query(DbProfile).filter(
-                DbProfile.full_name.ilike(q)
-            ).limit(5).all()
-            results.extend(by_name)
-
-            # Поиск по телефону (если в запросе цифры)
-            if any(c.isdigit() for c in query):
-                digits = "".join(c for c in query if c.isdigit())
-                by_phone = session.query(DbProfile).filter(
-                    DbProfile.phones.contains(digits)
-                ).limit(5).all()
-                for p in by_phone:
-                    if p.id not in [r.id for r in results]:
-                        results.append(p)
-
-            # Поиск по email
-            if "@" in query:
-                by_email = session.query(DbProfile).filter(
-                    DbProfile.emails.contains(query)
-                ).limit(5).all()
-                for p in by_email:
-                    if p.id not in [r.id for r in results]:
-                        results.append(p)
-
-            # Поиск по ИНН
-            if query.isdigit() and len(query) in (10, 12):
-                by_inn = session.query(DbProfile).filter(
-                    DbProfile.inn == query
-                ).limit(5).all()
-                for p in by_inn:
-                    if p.id not in [r.id for r in results]:
-                        results.append(p)
+        items = await search_profiles(value or query, limit=5, field=field)
     except Exception as ex:
         logger.exception("profile search error")
         await message.answer(f"Ошибка поиска: {ex}")
         return
 
-    if not results:
+    if not items:
         await message.answer(
             f"По «{query}» в базе профилей ничего нет.\n\n"
             "Убедитесь, что данные были импортированы через /import.",
@@ -275,14 +289,17 @@ async def run_profile(message: Message, query: str):
         )
         return
 
-    # Показываем результаты (до 5 профилей)
-    if len(results) == 1:
-        await message.answer(_fmt(results[0]), parse_mode="HTML")
+    if len(items) == 1:
+        pf = items[0].get("profile", {})
+        text = items[0].get("text", "")
+        await message.answer(f"<b>{_esc_name(pf)}</b>\n\n{_fmt_supabase(pf)}",
+                             parse_mode="HTML", disable_web_page_preview=True)
     else:
-        parts = [f"Найдено <b>{len(results)}</b> профилей:\n"]
-        for i, p in enumerate(results, 1):
-            name = p.full_name or "Без имени"
-            phones = p.phones if isinstance(p.phones, list) else []
+        parts = [f"Найдено <b>{len(items)}</b> профилей:\n"]
+        for i, it in enumerate(items, 1):
+            pf = it.get("profile", {})
+            name = pf.get("full_name") or "Без имени"
+            phones = pf.get("phones") or []
             phone_str = phones[0] if phones else "—"
             parts.append(f"{i}. <b>{name}</b> · {phone_str}")
         parts.append("\nДля подробностей: <code>/profile ФИО</code>")

@@ -98,21 +98,20 @@ async def _search_supabase(query: str, mode: str, limit: int,
     if not (sb.enabled and q):
         return []
 
-    if field == "phone":
-        joined = f"text.ilike.*{q}*"
-    elif field == "name":
-        joined = f"author.ilike.*{q}*"
-    elif field in ("email", "inn", "passport", "auto"):
-        joined = f"text.ilike.*{q}*"
-    elif mode == "account":
-        joined = f"author.ilike.*{q}*"
-    else:
-        joined = f"(section.ilike.*{q}*,text.ilike.*{q}*,source.ilike.*{q}*)"
+    params: dict = {"select": _SELECT, "limit": str(limit)}
 
-    params = {"select": _SELECT, "or": f"({joined})",
-              "order": _ORDER, "limit": str(limit)}
-    # На 2+ млн записей ilike по text работает медленно — даём больше времени,
-    # чтобы большой поиск не ронялся по таймауту.
+    if field == "phone":
+        params["or"] = f"(text.ilike.*{q}*,author.ilike.*{q}*)"
+    elif field == "name":
+        params["or"] = f"(author.ilike.*{q}*,text.ilike.*{q}*)"
+    elif field in ("email", "inn", "passport", "auto"):
+        params["or"] = f"(text.ilike.*{q}*,author.ilike.*{q}*)"
+    elif mode == "account":
+        params["or"] = f"(author.ilike.*{q}*,text.ilike.*{q}*)"
+    else:
+        params["or"] = (f"(section.ilike.*{q}*,text.ilike.*{q}*,"
+                        f"source.ilike.*{q}*,author.ilike.*{q}*)")
+
     async with httpx.AsyncClient(timeout=60, headers=sb._headers) as client:
         r = await client.get(sb.url + "/db_records", params=params)
         r.raise_for_status()
@@ -716,7 +715,7 @@ async def _search_related_supabase(identifiers: dict, hit_profile_ids: set,
                 r = await client.get(sb.url + "/db_records",
                                      params={"select": _SELECT,
                                              "or": f"({','.join(ors_rec)})",
-                                             "order": _ORDER, "limit": "100"})
+                                             "limit": "100"})
                 if r.status_code < 400:
                     for row in r.json():
                         ck = str(row.get("checksum") or row.get("id"))
