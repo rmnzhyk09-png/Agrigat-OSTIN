@@ -9,6 +9,7 @@ PLATFORM_NAMES = {
     "profile": "Профиль человека",
     "blackbird": "Blackbird",
     "datatech": "DataTech",
+    "himera": "Himera",
 }
 
 

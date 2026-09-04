@@ -9,6 +9,7 @@ from .reporting import generate_summary
 from .dbimport.query import search_imported, search_profiles, search_related
 from .services.blackbird import search_blackbird, PLATFORM as BB_PLATFORM
 from .services.datatech import search_datatech, PLATFORM as DT_PLATFORM
+from .services.himera import search_himera, PLATFORM as HM_PLATFORM
 from .services.snoop import search_snoop, PLATFORM as SN_PLATFORM
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,17 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     if nickname and mode in ("query", "profile") and not field:
         providers.append((asyncio.ensure_future(
             search_datatech(nickname, limit=10)), DT_PLATFORM))
+
+    # Himera (платный): включается ТОЛЬКО для специализированного пробива —
+    # когда пользователь явно указал поле (имя/телефон/паспорт/ИНН/СНИЛС/
+    # email/авто). Свободный «глобальный» запрос (field="") Himera НЕ берёт,
+    # чтобы не расходовать платный пакет зря. Потолок расхода — в himera.py
+    # (HIMERA_MAX_REQUESTS). Отключён, если нет HIMERA_API_KEY.
+    HIMERA_FIELDS = ("name", "phone", "passport", "inn", "snils", "email", "auto")
+    if (nickname and mode in ("query", "profile")
+            and field in HIMERA_FIELDS):
+        providers.append((asyncio.ensure_future(
+            search_himera(nickname, limit=10)), HM_PLATFORM))
 
     if want_nick and not field:
         providers.append((asyncio.ensure_future(

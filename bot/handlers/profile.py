@@ -269,7 +269,7 @@ async def run_profile(message: Message, query: str):
 
     if not results:
         await message.answer(
-            f"По запросу «{query}» профилей не найдено.\n\n"
+            f"По «{query}» в базе профилей ничего нет.\n\n"
             "Убедитесь, что данные были импортированы через /import.",
             parse_mode="HTML",
         )

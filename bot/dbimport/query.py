@@ -24,8 +24,12 @@ PLATFORM = "db"
 
 _SELECT = "id,checksum,section,source,author,text,url,date"
 _ORDER = "date.desc.nullslast"
-# Окно последних записей, по которому ищем локально (для SQLite нет Unicode-lower)
-_LOCAL_WINDOW = 5000
+# Локальный поиск по зеркалу: по умолчанию сканируем ВСЁ зеркало (не обрезаем),
+# иначе импортированные записи молча пропадают из выдачи. Можно ограничить
+# через DB_LOCAL_WINDOW (N последних записей) для ускорения fallback-поиска.
+def _window() -> int | None:
+    w = getattr(settings, "db_local_window", 0) or 0
+    return None if w <= 0 else w
 
 
 def _sanitize(value: str) -> str:
@@ -107,7 +111,9 @@ async def _search_supabase(query: str, mode: str, limit: int,
 
     params = {"select": _SELECT, "or": f"({joined})",
               "order": _ORDER, "limit": str(limit)}
-    async with httpx.AsyncClient(timeout=30, headers=sb._headers) as client:
+    # На 2+ млн записей ilike по text работает медленно — даём больше времени,
+    # чтобы большой поиск не ронялся по таймауту.
+    async with httpx.AsyncClient(timeout=60, headers=sb._headers) as client:
         r = await client.get(sb.url + "/db_records", params=params)
         r.raise_for_status()
         return [_to_item(row) for row in r.json()]
@@ -147,9 +153,11 @@ def _search_local(query: str, mode: str, limit: int, field: str = "") -> list[di
     if not q:
         return []
     with SyncSessionLocal() as session:
-        rows = session.execute(
-            select(DbRecord).order_by(DbRecord.id.desc()).limit(_LOCAL_WINDOW)
-        ).scalars().all()
+        stmt = select(DbRecord).order_by(DbRecord.id.desc())
+        w = _window()
+        if w:
+            stmt = stmt.limit(w)
+        rows = session.execute(stmt).scalars().all()
     out: list[dict] = []
     for r in rows:
         haystack = _haystack_for(r, field)
@@ -447,14 +455,20 @@ async def _search_profiles_supabase(query: str, limit: int = 5,
 
     params: dict = {"select": _PROFILE_SELECT, "limit": str(limit)}
     if field in ("phone", "тел", "телефон") and digits:
+        # Номера хранятся в массиве phones, возможно с ведущим '+'.
+        # cs (array-contains) требует ТОЧНОГО совпадения элемента; строковые
+        # значения в PostgREST-массивах надо писать в кавычках (JSON-токен),
+        # поэтому ищем и '7999...', и '+7999...' через or.
         p = f"{digits}"
-        params["phones"] = f"cs.[{p}]"
+        params["or"] = f'(phones.cs.["{p}"],phones.cs.["+{p}"])'
     elif field in ("email", "почта"):
-        params["emails"] = f"cs.[{q.lower()}]"
+        params["emails"] = f'cs.["{q.lower()}"]'
     elif field in ("name", "имя", "фио", "фамилия"):
         params["full_name"] = f"ilike.*{qs}*"
     elif field in ("inn", "иин"):
         params["inn"] = f"eq.{qs}"
+    elif field == "snils":
+        params["snils"] = f"eq.{qs}"
     elif field == "passport":
         params["or"] = f"(passport_series.ilike.*{qs}*,passport_number.ilike.*{qs}*)"
     elif field in ("auto", "авто", "госномер"):
@@ -485,9 +499,10 @@ async def _search_profiles_supabase(query: str, limit: int = 5,
         # без тега — ищем по ФИО / имени / телефону / email
         ors = [f"full_name.ilike.*{qs}*"]
         if digits:
-            ors.append(f"phones.cs.[{digits}]")
+            ors.append(f'phones.cs.["{digits}"]')
+            ors.append(f'phones.cs.["+{digits}"]')
         if "@" in q:
-            ors.append(f"emails.cs.[{q.lower()}]")
+            ors.append(f'emails.cs.["{q.lower()}"]')
         params["or"] = f"({','.join(ors)})"
 
     try:

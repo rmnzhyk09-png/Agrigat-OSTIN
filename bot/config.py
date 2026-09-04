@@ -79,6 +79,12 @@ class Settings:
         self.supabase_bucket_public = os.getenv("SUPABASE_BUCKET_PUBLIC",
                                                 "true").lower() == "true"
 
+        # Локальный поиск по зеркалу: сколько последних записей db_records сканировать.
+        # 0 = без лимита (сканировать всё зеркало). Основной источник — Supabase,
+        # локальное зеркало — это автономный fallback, но обрезать его нельзя,
+        # иначе пропадают импортированные данные (по умолчанию сканируем всё).
+        self.db_local_window = _env_int("DB_LOCAL_WINDOW", 0)
+
         # Blackbird — OSINT поиск по никнейму/email (готовый инструмент p1ngul1n0/blackbird)
         # Путь к папке blackbird (там лежит blackbird.py). Пусто = не подключён.
         self.blackbird_dir = os.getenv("BLACKBIRD_DIR", "").strip()
@@ -94,6 +100,16 @@ class Settings:
         self.datatech_api_key = os.getenv("DATATECH_API_KEY", "").strip()
         self.datatech_base_url = os.getenv("DATATECH_BASE_URL", "").strip()
         self.datatech_mode = os.getenv("DATATECH_MODE", "auto").strip()
+
+        # Himera Search — платный OSINT-провайдер (https://himera-search.one).
+        # Пусто = не подключён. Задайте HIMERA_API_KEY (+ опционально
+        # HIMERA_BASE_URL) чтобы включить. Сервис платный и привязан к IP:
+        # IP, с которого ходит сервер, должен быть авторизован в ЛК Himera.
+        # HIMERA_MAX_REQUESTS — жёсткий потолок расходов пакета (по умолчанию 15):
+        # после исчерпания Himera перестаёт вызываться до перезапуска процесса.
+        self.himera_api_key = os.getenv("HIMERA_API_KEY", "").strip()
+        self.himera_base_url = os.getenv("HIMERA_BASE_URL", "").strip()
+        self.himera_max_requests = _env_int("HIMERA_MAX_REQUESTS", 15)
 
         # Snoop — OSINT username presence-check по 400+ сайтам
         # (https://github.com/snooppr/snoop). Запускается как отдельный процесс.

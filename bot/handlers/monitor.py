@@ -22,6 +22,7 @@ from aiogram.fsm.state import State, StatesGroup
 from ..tasks import run_monitoring
 from ..dbimport.query import parse_search_field
 from ..services.blackbird import search_blackbird
+from ..services import himera
 from .fmt_menu import send_findings
 
 router = Router()
@@ -136,6 +137,13 @@ async def _finish(message: Message, query: str, tags: list[str],
 
     await status.delete()
     title = _finish_title(field, mode, query)
+    # После поиска — отмечаем специализированный (Himera) пробив и остаток пакета.
+    used = himera.himera_budget_used()
+    if field and used > 0:
+        left = himera.himera_budget_left()
+        await message.answer(
+            f"🧾 Himera: потрачено запросов <b>{used}</b>/<b>{used + left}</b>"
+        )
     await send_findings(message, title, result["items"], result)
     from ..db import repo
     try:
