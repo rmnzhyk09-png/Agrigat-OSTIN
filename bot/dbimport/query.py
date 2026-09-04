@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 PLATFORM = "db"
 
 _SELECT = "id,checksum,section,source,author,text,url,date"
-_ORDER = "date.desc.nullslast"
 # Локальный поиск по зеркалу: по умолчанию сканируем ВСЁ зеркало (не обрезаем),
 # иначе импортированные записи молча пропадают из выдачи. Можно ограничить
 # через DB_LOCAL_WINDOW (N последних записей) для ускорения fallback-поиска.
@@ -177,15 +176,22 @@ def _search_local(query: str, mode: str, limit: int, field: str = "") -> list[di
 async def search_imported(query: str, mode: str = "query", limit: int = 20,
                           field: str = "") -> list[dict]:
     """Записи из импортированной БД, подходящие под запрос."""
-    if not (query or "").strip():
+    q = (query or "").strip()
+    if not q:
         return []
+    parsed_field, parsed_val = parse_search_field(q)
+    if parsed_field:
+        field = parsed_field
+        q = parsed_val
+    if not q:
+        q = (query or "").strip()
     sb = SupabaseStore()
     if sb.enabled:
         try:
-            return await _search_supabase(query, mode, limit, field)
+            return await _search_supabase(q, mode, limit, field)
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase search fallback to local: %s", ex)
-    return await asyncio.to_thread(_search_local, query, mode, limit, field)
+    return await asyncio.to_thread(_search_local, q, mode, limit, field)
 
 
 # ---------- поиск профилей ----------
@@ -523,18 +529,25 @@ async def search_profiles(query: str, limit: int = 5, field: str = "") -> list[d
     field — тип идентификатора: name/phone/email/inn/passport/snils/auto.
     Приоритет — Supabase (db_profiles); иначе локальное зеркало на сервере.
     """
-    if not (query or "").strip():
+    q = (query or "").strip()
+    if not q:
         return []
+    parsed_field, parsed_val = parse_search_field(q)
+    if parsed_field:
+        field = parsed_field
+        q = parsed_val
+    if not q:
+        q = (query or "").strip()
     sb = SupabaseStore()
     if sb.enabled:
         try:
-            res = await _search_profiles_supabase(query, limit, field)
+            res = await _search_profiles_supabase(q, limit, field)
             if res:
                 return res
             return []
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase profile search fallback to local: %s", ex)
-    return await asyncio.to_thread(_search_profiles_local, query, limit, field)
+    return await asyncio.to_thread(_search_profiles_local, q, limit, field)
 
 
 # ---------- перекрёстные связи ----------
