@@ -179,6 +179,21 @@ def _guess_type(query: str) -> str:
     return "default"
 
 
+# Подсказка поля пользователя (имя/телефон/инн/паспорт/снилс/email/авто)
+# -> тип Himera. Возвращает None, если поле неоднозначно (по умолчанию _guess_type).
+def _type_from_field(field: str):
+    mapping = {
+        "name": "name_standart",
+        "phone": "phone",
+        "email": "email",
+        "inn": "inn_fl",
+        "passport": "passport",
+        "snils": "snils",
+        "auto": "avto",
+    }
+    return mapping.get((field or "").strip().lower())
+
+
 def _build_params(query: str, qtype: str) -> dict:
     """Строит параметры формы для запроса Himera.
 
@@ -282,12 +297,17 @@ def _row_to_item(row: dict, query: str, report_url: str) -> dict:
     }
 
 
-async def search_himera(query: str, limit: int = 10) -> list[dict]:
+async def search_himera(query: str, limit: int = 10, field: str = "") -> list[dict]:
     """Платный поиск по Himera Search API.
 
     Запрос классифицируется по типу, отправляется POST-запросом, ответ
     разворачивается в плоский список item'ов. Работает до тех пор, пока
     задан HIMERA_API_KEY и не исчерпан пакет запросов (HIMERA_MAX_REQUESTS).
+
+    field — подсказка пользователя (name/phone/email/inn/passport/snils/auto):
+    если она однозначно соответствует типу Himera, берём её, а не эвристику
+    _guess_type (например, 10-значный паспорт '4512345678' без подсказки
+    распознаётся как ИНН).
     """
     if not _enabled():
         return []
@@ -297,7 +317,7 @@ async def search_himera(query: str, limit: int = 10) -> list[dict]:
     q = (query or "").strip()
     if not q:
         return []
-    qtype = _guess_type(q)
+    qtype = _type_from_field(field) or _guess_type(q)
     if qtype == "default":
         # Обобщённый запрос без распознанного типа Himera не берёт
         logger.info("himera: тип не распознан, пропускаем («%s»)", q[:60])

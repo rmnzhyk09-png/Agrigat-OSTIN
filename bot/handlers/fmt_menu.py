@@ -217,7 +217,14 @@ async def _send_chunk(message: Message, title: str, items: list[dict],
     chunk = items[offset:offset + _PAGE]
     lines = [f"📋 <b>{_esc(title)}</b>", ""]
     for i, it in enumerate(chunk, offset + 1):
-        lines.append(_item_line(i, it))
+        text = _esc((it.get("text") or "").replace("\n", " ")[:80])
+        url = _esc(it.get("url") or "")
+        platform = _esc(it.get("platform") or "")
+        head = f"{i}. [{platform}] "
+        if url.startswith(("http", "magnet:")):
+            lines.append(head + f"<a href=\"{url}\">{text}</a>")
+        else:
+            lines.append(head + text)
     lines.append(f"\nПоказано <b>{min(offset + _PAGE, len(items))}</b> из <b>{len(items)}</b>")
 
     rows = []
@@ -256,7 +263,7 @@ async def close_list(callback: CallbackQuery):
 @router.callback_query(F.data == "fmt:list")
 async def show_list(callback: CallbackQuery):
     """Показать все находки постранично."""
-    entry = _load(callback.from_user.id)
+    entry = await _load(callback.from_user.id)
     if not entry:
         await callback.answer("Результат устарел — повторите поиск.", show_alert=True)
         return
@@ -274,7 +281,7 @@ async def show_list(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("fmt:more:"))
 async def show_more(callback: CallbackQuery):
     """Следующая страница списка находок."""
-    entry = _load(callback.from_user.id)
+    entry = await _load(callback.from_user.id)
     if not entry:
         await callback.answer("Результат устарел — повторите поиск.", show_alert=True)
         return
@@ -293,7 +300,7 @@ async def show_more(callback: CallbackQuery):
 @router.callback_query(F.data.in_(_FMT_CHOICES))
 async def process_format(callback: CallbackQuery):
     choice = (callback.data or "").split(":", 1)[-1]
-    entry = _load(callback.from_user.id)
+    entry = await _load(callback.from_user.id)
     if not entry:
         await callback.answer("Результат устарел — повторите поиск.",
                               show_alert=True)

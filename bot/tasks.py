@@ -149,7 +149,7 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     if (nickname and mode in ("query", "profile")
             and field in HIMERA_FIELDS):
         providers.append((asyncio.ensure_future(
-            search_himera(nickname, limit=10)), HM_PLATFORM))
+            search_himera(nickname, limit=10, field=field)), HM_PLATFORM))
 
     if want_nick and not field:
         providers.append((asyncio.ensure_future(
