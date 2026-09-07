@@ -70,7 +70,53 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     items = await collect_all(nickname, limit=50, period_days=30,
                               progress_callback=progress_callback, mode=mode)
 
-    # Добавляем записи из импортированной БД (Supabase / локальное зеркало)
+    # ── Мегапоиск: OSINT-провайдеры запускаются СРАЗУ, ПАРАЛЛЕЛЬНО с поиском
+    # по импортированной БД (search_imported / search_profiles ниже).
+    # DataTech (async API), Blackbird (subprocess), Snoop (subprocess), Himera.
+    # Каждый ищет независимо, результаты сливаются с дедупликацией позже.
+    async def _merge_partial(items: list[dict], got: list[dict], default_plat: str):
+        seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
+                for it in items}
+        added = 0
+        for it in got:
+            key = it.get("url") or f"{it.get('platform', default_plat)}:{it.get('id')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(it)
+            added += 1
+        return items, added
+
+    want_nick = _want_blackbird(nickname, mode, field)
+    providers: list[tuple] = []
+
+    if want_nick:
+        providers.append((asyncio.create_task(
+            asyncio.to_thread(search_blackbird, nickname,
+                              as_email=("@" in nickname))), BB_PLATFORM))
+
+    if nickname and mode in ("query", "profile"):
+        providers.append((asyncio.create_task(
+            search_datatech(nickname, limit=10)), DT_PLATFORM))
+
+    # Himera (платный): включается ТОЛЬКО для специализированного пробива —
+    # когда пользователь явно указал поле (имя/телефон/паспорт/ИНН/СНИЛС/
+    # email/авто). Свободный «глобальный» запрос (field="") Himera НЕ берёт,
+    # чтобы не расходовать платный пакет зря. Потолок расхода — в himera.py
+    # (HIMERA_MAX_REQUESTS). Отключён, если нет HIMERA_API_KEY.
+    HIMERA_FIELDS = ("name", "phone", "passport", "inn", "snils", "email", "auto")
+    if (nickname and mode in ("query", "profile")
+            and field in HIMERA_FIELDS):
+        providers.append((asyncio.create_task(
+            search_himera(nickname, limit=10, field=field)), HM_PLATFORM))
+
+    if want_nick and not field:
+        providers.append((asyncio.create_task(
+            asyncio.to_thread(search_snoop, nickname)), SN_PLATFORM))
+
+    # Пока провайдеры работают в фоне — добавляем записи из импортированной БД
+    # (Supabase / локальное зеркало). Это не блокирует провайдеров: всё идёт
+    # в одних asyncio-задачах, а gather ниже ждёт их завершения.
     db_found_records: list[dict] = []
     db_found_profiles: list[dict] = []
     try:
@@ -111,50 +157,8 @@ async def run_monitoring(nickname: str, tags: list[str], progress_callback=None,
     except Exception as ex:
         logger.warning("поиск по импортированной БД: %s", ex)
 
-    # ── Мегапоиск: OSINT-провайдеры запускаются ПАРАЛЛЕЛЬНО ─────────────
-    # DataTech (async API), Blackbird (subprocess), Snoop (subprocess).
-    # Все идут одним asyncio.gather → каждый ищет независимо, результаты
-    # сливаются с дедупликацией. Отсутствие какого-то провайдера (нет ключа/
-    # DIR/сети) не мешает остальным — _enabled() калится внутри каждого.
-    async def _merge_partial(items: list[dict], got: list[dict], default_plat: str):
-        seen = {it.get("url") or f"{it.get('platform')}:{it.get('id')}"
-                for it in items}
-        added = 0
-        for it in got:
-            key = it.get("url") or f"{it.get('platform', default_plat)}:{it.get('id')}"
-            if key in seen:
-                continue
-            seen.add(key)
-            items.append(it)
-            added += 1
-        return items, added
-
-    want_nick = _want_blackbird(nickname, mode, field)
-    providers: list[tuple] = []
-
-    if want_nick:
-        providers.append((asyncio.ensure_future(asyncio.to_thread(
-            search_blackbird, nickname, as_email=("@" in nickname))), BB_PLATFORM))
-
-    if nickname and mode in ("query", "profile") and not field:
-        providers.append((asyncio.ensure_future(
-            search_datatech(nickname, limit=10)), DT_PLATFORM))
-
-    # Himera (платный): включается ТОЛЬКО для специализированного пробива —
-    # когда пользователь явно указал поле (имя/телефон/паспорт/ИНН/СНИЛС/
-    # email/авто). Свободный «глобальный» запрос (field="") Himera НЕ берёт,
-    # чтобы не расходовать платный пакет зря. Потолок расхода — в himera.py
-    # (HIMERA_MAX_REQUESTS). Отключён, если нет HIMERA_API_KEY.
-    HIMERA_FIELDS = ("name", "phone", "passport", "inn", "snils", "email", "auto")
-    if (nickname and mode in ("query", "profile")
-            and field in HIMERA_FIELDS):
-        providers.append((asyncio.ensure_future(
-            search_himera(nickname, limit=10, field=field)), HM_PLATFORM))
-
-    if want_nick and not field:
-        providers.append((asyncio.ensure_future(
-            asyncio.to_thread(search_snoop, nickname)), SN_PLATFORM))
-
+    # Собираем результаты провайдеров (await gather — фоновые задачи Blackbird,
+    # DataTech, Snoop, Himera), дедупликация и слияние с записями из БД.
     if providers:
         try:
             results = await asyncio.gather(

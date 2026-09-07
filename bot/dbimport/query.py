@@ -150,6 +150,7 @@ def _search_local(query: str, mode: str, limit: int, field: str = "") -> list[di
     q = (query or "").strip().lower()
     if not q:
         return []
+    q_digits = "".join(c for c in q if c.isdigit())
     with SyncSessionLocal() as session:
         stmt = select(DbRecord).order_by(DbRecord.id.desc())
         w = _window()
@@ -159,7 +160,12 @@ def _search_local(query: str, mode: str, limit: int, field: str = "") -> list[di
     out: list[dict] = []
     for r in rows:
         haystack = _haystack_for(r, field)
-        if q not in haystack:
+        ok = q in haystack
+        # Номера в записях часто отформатированы ('+7 (900) 123-45-67'),
+        # а пользователь вводит цифры подряд — сверяем по «только цифры».
+        if not ok and q_digits and field == "phone":
+            ok = q_digits in "".join(c for c in r.text if c.isdigit())
+        if not ok:
             continue
         out.append(_to_item({
             "id": r.id, "checksum": r.checksum, "section": r.section,
@@ -221,6 +227,17 @@ def _search_profiles_local(query: str, limit: int = 5, field: str = "") -> list[
                 extra_rows = session.query(DbProfile).filter(
                     DbProfile.phones.contains(digits)
                 ).limit(limit).all()
+                if not extra_rows:
+                    # Номера часто хранятся отформатированными ('+7 (900)…');
+                    # нормализуем обе стороны к «только цифрам».
+                    for p in session.query(DbProfile).all():
+                        ph = p.phones if isinstance(p.phones, list) else []
+                        pd = "".join(c for c in " ".join(str(x) for x in ph)
+                                     if c.isdigit())
+                        if pd and digits in pd:
+                            extra_rows.append(p)
+                            if len(extra_rows) >= limit:
+                                break
         elif field in ("email", "почта"):
             extra_rows = session.query(DbProfile).filter(
                 DbProfile.emails.contains(qlower)
@@ -264,8 +281,14 @@ def _search_profiles_local(query: str, limit: int = 5, field: str = "") -> list[
 
         out.extend(name_rows)
 
-        # Поиск по госномеру авто (JSON) — фильтруем в Python
-        if field in ("auto", "авто", "госномер") or (field in ("", "имя") and not (name_rows or extra_rows)):
+        # Поиск по госномеру авто (JSON) — фильтруем в Python. Полный скан
+        # 300k+ профилей запускаем ТОЛЬКО если запрос похож на номер авто
+        # (1-2 буквы + 3-4 цифры + 2-3 буквы) или явно указан field='auto',
+        # иначе свободный текстовый запрос упирался бы в полный перебор.
+        plate_like = bool(
+            re.search(r"[А-ЯЁA-Z]{1,2}\s?\d{3,4}\s?[А-ЯЁA-Z]{2,3}\s?\d{2,3}",
+                      q, re.IGNORECASE))
+        if field in ("auto", "авто", "госномер") or plate_like:
             plate_key = q.upper().replace(" ", "")
             try:
                 all_profiles = session.query(DbProfile).all()
@@ -544,7 +567,6 @@ async def search_profiles(query: str, limit: int = 5, field: str = "") -> list[d
             res = await _search_profiles_supabase(q, limit, field)
             if res:
                 return res
-            return []
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase profile search fallback to local: %s", ex)
     return await asyncio.to_thread(_search_profiles_local, q, limit, field)

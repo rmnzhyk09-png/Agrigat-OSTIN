@@ -9,7 +9,10 @@
 ссылкой через /import_url — бот заберёт файл сам, без ограничения Telegram,
 и при желании сохранит копию в Supabase Storage.
 """
+import ipaddress
 import logging
+import socket
+import urllib.parse
 from pathlib import Path
 
 import httpx
@@ -28,6 +31,23 @@ _ALLOWED = SUPPORTED_EXTENSIONS
 
 # Лимит скачивания по чату (Telegram не даёт боту тянуть больше) — ~20 МБ.
 CHAT_DOWNLOAD_LIMIT = 20 * 1024 * 1024
+
+# Запрещённые для /import_url сети (SSRF-защита): loopback, приватные,
+# link-local (туда попадает cloud metadata 169.254.169.254) и IPv6-аналоги.
+_PRIVATE_NETS = (
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+_METADATA_HOSTS = ("metadata.google.internal", "instance-data.ec2.internal",
+                   "metadata", "metadata.internal")
 
 HELP_TEXT = (
     "<b>Импорт базы данных</b>\n\n"
@@ -133,7 +153,6 @@ async def cmd_import_url(message: Message, command: CommandObject):
         return
 
     # имя из ссылки + расширение
-    import urllib.parse
     _fn = urllib.parse.unquote(Path(url.split("?", 1)[0]).name) or "download.bin"
     _fn = _fn.replace("/", "_")[:200]
     ext = Path(_fn).suffix.lower()
@@ -160,21 +179,75 @@ async def cmd_import_url(message: Message, command: CommandObject):
     await _run_import(status, dest, _fn, source_url=url)
 
 
-async def _download_from_url(url: str, dest: Path) -> tuple[bool, str]:
-    """Стримит файл с прямой ссылки в dest. Возвращает (ок, сообщение)."""
+def _url_blocked(url: str) -> str:
+    """Проверяет URL на SSRF-риски. Возвращает причину блокировки или ''."""
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "невалидный URL"
+    if parsed.scheme not in ("http", "https"):
+        return "схема не http/https"
+    host = (parsed.hostname or "").strip().rstrip(".")
+    if not host:
+        return "нет хоста"
+    host_l = host.lower()
+    if any(h in host_l for h in _METADATA_HOSTS) or host_l in ("169.254.169.254",):
+        return "metadata-эндпоинт"
+    # Резолвим хост и блокируем внутренние адреса. httpx и так переспросит DNS —
+    # это не панацея от DNS-rebinding, но отрезает очевидные SSRF-векторы.
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 80, type=socket.SOCK_STREAM)
+    except OSError:
+        return "хост не резолвится"
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except (ValueError, IndexError):
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return f"внутренний адрес {ip}"
+        if any(ip in net for net in _PRIVATE_NETS):
+            return f"внутренний адрес {ip}"
+    return ""
+
+
+async def _download_from_url(url: str, dest: Path) -> tuple[bool, str]:
+    """Стримит файл с прямой ссылки в dest. Возвращает (ок, сообщение).
+
+    SSRF-защита: внутренние/локальные адреса блокируются до запроса,
+    редиректы запрещены (каждый шаг перепроверялся бы), размер ограничен
+    MAX_IMPORT_DOWNLOAD_MB.
+    """
+    blocked = _url_blocked(url)
+    if blocked:
+        return False, f"URL отклонён ({blocked})"
+    limit = getattr(settings, "import_download_limit", 0)
+    limit_mb = (limit // (1024 * 1024)) if limit else 0
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             async with client.stream("GET", url) as r:
+                if r.status_code in (301, 302, 303, 307, 308):
+                    return False, "редиректы не поддерживаются (дайте прямую ссылку)"
                 if r.status_code >= 400:
                     return False, f"HTTP {r.status_code}"
+                total = 0
                 with open(dest, "wb") as f:
                     async for chunk in r.aiter_bytes():
+                        total += len(chunk)
+                        if limit and total > limit:
+                            _unlink(dest)
+                            return False, (f"файл больше лимита ({limit_mb} МБ); "
+                                           "увеличьте MAX_IMPORT_DOWNLOAD_MB")
                         f.write(chunk)
         if not dest.exists() or dest.stat().st_size == 0:
+            _unlink(dest)
             return False, "файл пустой"
     except httpx.HTTPError as ex:
+        _unlink(dest)
         return False, str(ex)
     except OSError as ex:
+        _unlink(dest)
         return False, str(ex)
     return True, ""
 
@@ -260,7 +333,7 @@ async def _render_report(status: Message, filename: str, result: dict,
     ]
     for name in result["sections"]:
         marker = "🆕" if name in result["new_sections"] else "•"
-        lines.append(f"{marker} {name}")
+        lines.append(f"{marker} {_esc(name)}")
     lines.append("")
     if storage_note:
         lines.append(storage_note + "\n")
@@ -279,4 +352,5 @@ async def _render_report(status: Message, filename: str, result: dict,
 
 
 def _esc(text) -> str:
-    return (str(text or "")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    from ..utils.text import escape_html
+    return escape_html(text)

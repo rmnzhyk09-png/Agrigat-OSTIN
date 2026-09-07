@@ -77,7 +77,8 @@ def _now_ts() -> float:
 
 
 def _esc(text) -> str:
-    return (str(text or "")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    from ..utils.text import escape_html
+    return escape_html(text)
 
 
 def _result_kb(has_items: bool) -> InlineKeyboardMarkup:
@@ -92,7 +93,7 @@ def _result_kb(has_items: bool) -> InlineKeyboardMarkup:
 
 async def send_findings(message: Message, title: str,
                         items: list[dict], result: dict):
-    """Сводка найденного + клавиатура выбора формата сохранения."""
+    """Выдача найденного сразу текстом, без меню выбора форматов."""
     stats = result.get("stats", {})
     await _store(message.from_user.id, message.chat.id, title, items, stats)
 
@@ -106,16 +107,12 @@ async def send_findings(message: Message, title: str,
         # Пробив по БД/профилям — показываем полные карточки, а не обрезки.
         blocks = [f"🕵️ <b>{_esc(title)}</b>", "",
                   f"Найдено: <b>{len(items)}</b> совпадений", ""]
-        shown = 0
-        for i, it in enumerate(items[:8], 1):
+        for i, it in enumerate(items[:10], 1):
             blocks.append(_card_text(it, i))
             blocks.append("")
-            shown += 1
-        if len(items) > shown:
-            blocks.append(f"… и ещё <b>{len(items) - shown}</b> — «📋 Показать все находки»")
-        blocks += ["", "Сохранить результат в формате 👇"]
         await message.answer("\n".join(blocks), parse_mode="HTML",
-                             disable_web_page_preview=True, reply_markup=_result_kb(True))
+                             disable_web_page_preview=True,
+                             reply_markup=_result_kb(True))
         return
 
     lines = [f"🕵️ <b>{_esc(title)}</b>", "",
@@ -135,22 +132,22 @@ async def send_findings(message: Message, title: str,
             f"📉 {sentiment.get('negative', 0)}")
 
     lines += ["", "<b>Топ находок:</b>"]
-    for i, it in enumerate(items[:5], 1):
+    for i, it in enumerate(items[:10], 1):
         url = it.get("url") or ""
         text = _esc((it.get("text") or "").replace("\n", " ")[:80])
         platform = _esc(it.get("platform") or "")
         head = f"{i}. [{platform}] "
         if url.startswith(("http", "magnet:")):
-            lines.append(head + f"<a href=\"{url}\">{text}</a>")
+            lines.append(head + f"<a href=\"{_esc(url)}\">{text}</a>")
         else:
             lines.append(head + text)
 
-    if len(items) > 5:
-        lines.append(f"… и ещё <b>{len(items) - 5}</b> — «📋 Показать все находки»")
+    if len(items) > 10:
+        lines.append(f"… и ещё <b>{len(items) - 10}</b> находок")
 
-    lines += ["", "Сохранить результат в формате 👇"]
     await message.answer("\n".join(lines), parse_mode="HTML",
-                         disable_web_page_preview=True, reply_markup=_result_kb(True))
+                         disable_web_page_preview=True,
+                         reply_markup=_result_kb(True))
 
 
 def _is_card_items(items: list[dict]) -> bool:
@@ -174,19 +171,11 @@ def _card_text(it: dict, i: int) -> str:
     text = _esc(it.get("text") or "")
     lines = [f"<b>{i}.</b> {_esc(it.get('author') or it.get('platform') or 'Находка')}"]
     for ln in (text or "").splitlines():
-        if not ln.strip():
-            continue
-        low = ln.strip().lower()
-        if low.startswith(("фио:", "телефон:", "email:", "инн:", "снилс:",
-                           "паспорт:", "адрес:", "дата рождения:", "авто:",
-                           "судебных дел:", "долги", "судимость", "банкротство",
-                           "ограничение на выезд", "работа:", "бизнес:")):
-            lines.append(f"   {ln.strip()}")
-        else:
+        if ln.strip():
             lines.append(f"   {ln.strip()}")
     url = it.get("url") or ""
     if url and url.startswith(("http", "magnet:")):
-        lines.append(f"   🔗 <a href=\"{url}\">ссылка</a>")
+        lines.append(f"   🔗 <a href=\"{_esc(url)}\">ссылка</a>")
     return "\n".join(lines)
 
 

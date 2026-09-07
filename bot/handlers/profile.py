@@ -10,52 +10,54 @@ import logging
 from aiogram import F, Router
 from aiogram.types import Message
 
+from ..utils.text import escape_html as esc
+
 logger = logging.getLogger(__name__)
 router = Router()
 
 
 def _esc_name(pf: dict) -> str:
     name = pf.get("full_name") or "Без имени"
-    return name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return esc(name)
 
 
 def _fmt_supabase(pf: dict) -> str:
     """Форматирует профиль из Supabase (dict) в читаемое сообщение."""
     lines = []
     if pf.get("date_of_birth"):
-        lines.append(f"Дата рождения: {pf['date_of_birth']}")
+        lines.append(f"Дата рождения: {esc(pf['date_of_birth'])}")
     phones = pf.get("phones") or []
     if phones:
-        lines.append("Телефоны: " + ", ".join(phones))
+        lines.append("Телефоны: " + ", ".join(esc(p) for p in phones))
     emails = pf.get("emails") or []
     if emails:
-        lines.append("Email: " + ", ".join(emails))
+        lines.append("Email: " + ", ".join(esc(e) for e in emails))
     if pf.get("registration_address"):
-        lines.append(f"Адрес: {pf['registration_address']}")
+        lines.append(f"Адрес: {esc(pf['registration_address'])}")
     if pf.get("inn"):
-        lines.append(f"ИНН: {pf['inn']}")
+        lines.append(f"ИНН: {esc(pf['inn'])}")
     if pf.get("snils"):
-        lines.append(f"СНИЛС: {pf['snils']}")
+        lines.append(f"СНИЛС: {esc(pf['snils'])}")
     if pf.get("passport_series") or pf.get("passport_number"):
-        lines.append(f"Паспорт: {(pf.get('passport_series') or '')} {(pf.get('passport_number') or '')}".strip())
+        lines.append(f"Паспорт: {esc(pf.get('passport_series') or '')} {esc(pf.get('passport_number') or '')}".strip())
     vehicles = pf.get("vehicles") or []
     for v in vehicles[:3]:
         if isinstance(v, dict):
-            lines.append(f"Авто: {v.get('make', '')} {v.get('plate', '')}".strip())
+            lines.append(f"Авто: {esc(v.get('make', ''))} {esc(v.get('plate', ''))}".strip())
     if pf.get("court_cases_count"):
-        lines.append(f"Судебных дел: {pf['court_cases_count']}")
+        lines.append(f"Судебных дел: {esc(pf['court_cases_count'])}")
     if pf.get("enforcement_debt_total"):
-        lines.append(f"Долги приставам: {pf['enforcement_debt_total']} руб.")
+        lines.append(f"Долги приставам: {esc(pf['enforcement_debt_total'])} руб.")
     if pf.get("criminal_record"):
         lines.append("Судимость: есть")
     if pf.get("bankruptcy_status"):
-        lines.append(f"Банкротство: {pf['bankruptcy_status']}")
+        lines.append(f"Банкротство: {esc(pf['bankruptcy_status'])}")
     if pf.get("current_employer"):
-        lines.append(f"Работа: {pf['current_employer']}")
+        lines.append(f"Работа: {esc(pf['current_employer'])}")
     confidence = pf.get("confidence") or ""
     if confidence:
         emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(confidence, "⚪")
-        lines.append(f"\nДостоверность: {emoji} {confidence}")
+        lines.append(f"\nДостоверность: {emoji} {esc(confidence)}")
     return "\n".join(lines)
 
 
@@ -94,7 +96,7 @@ async def run_profile(message: Message, query: str):
 
     if not items:
         await message.answer(
-            f"По «{query}» в базе профилей ничего нет.\n\n"
+            f"По «{esc(query)}» в базе профилей ничего нет.\n\n"
             "Убедитесь, что данные были импортированы через /import.",
             parse_mode="HTML",
         )
@@ -111,7 +113,7 @@ async def run_profile(message: Message, query: str):
             pf = it.get("profile", {})
             name = pf.get("full_name") or "Без имени"
             phones = pf.get("phones") or []
-            phone_str = phones[0] if phones else "—"
-            parts.append(f"{i}. <b>{name}</b> · {phone_str}")
+            phone_str = esc(phones[0]) if phones else "—"
+            parts.append(f"{i}. <b>{esc(name)}</b> · {phone_str}")
         parts.append("\nДля подробностей: <code>/profile ФИО</code>")
         await message.answer("\n".join(parts), parse_mode="HTML")

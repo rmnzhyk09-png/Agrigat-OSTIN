@@ -63,6 +63,8 @@ class Settings:
 
         # Каталог для файлов, загруженных через /import
         self.upload_dir = os.getenv("UPLOAD_DIR", "data/uploads")
+        # Лимит скачивания по /import_url (МБ). Обрезает большой/злонамеренный файл.
+        self.import_download_limit = _env_int("MAX_IMPORT_DOWNLOAD_MB", 512) * 1024 * 1024
 
         # Supabase — хранение импортированных БД (см. supabase/schema.sql)
         # URL вида https://xxxx.supabase.co
@@ -116,7 +118,9 @@ class Settings:
         # SNOOP_DIR = папка со snoop-ом; SNOOP_PYTHON = (опц.) python для него.
         self.snoop_dir = os.getenv("SNOOP_DIR", "").strip()
         self.snoop_python = os.getenv("SNOOP_PYTHON", "").strip()
-        self.snoop_timeout = _env_int("SNOOP_TIMEOUT", 180)
+        self.snoop_timeout = _env_int("SNOOP_TIMEOUT", 300)
+        # База Snoop: BDdemo (быстро) или BDfull (все ~400+ сайтов).
+        self.snoop_base = os.getenv("SNOOP_BASE", "BDdemo").strip()
         # Домены, по которым запрещено искать (заблокированы средой развёртывания).
         self.blocked_hosts = [h.strip().lower() for h in
                               os.getenv("BLOCKED_HOSTS",

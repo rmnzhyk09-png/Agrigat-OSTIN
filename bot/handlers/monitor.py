@@ -15,6 +15,7 @@ import asyncio
 
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -121,6 +122,19 @@ def _finish_title(field: str, default: str, query: str) -> str:
     return f"{MODE_TITLES.get(default, 'Поиск')}: {query}"
 
 
+async def _keep_typing(bot, chat_id: int):
+    """Фоновая индикация «печатает…», пока идёт долгий поиск."""
+    try:
+        while True:
+            try:
+                await bot.send_chat_action(chat_id, ChatAction.TYPING)
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
+
+
 async def _finish(message: Message, query: str, tags: list[str],
                   mode: str = "query", field: str = ""):
     """Прогнать мониторинг и показать сводку + выбор формата сохранения."""
@@ -128,14 +142,48 @@ async def _finish(message: Message, query: str, tags: list[str],
     status = await message.answer(
         f"Цель: <b>{query}</b>\nТеги: {tags_line}\nСобираю данные…"
     )
+    done = False
+    last_progress = 0.0
 
-    result = await run_monitoring(query, tags, mode=mode, field=field)
+    async def _progress(count: int, total: int, platform: str):
+        """Живой статус по мере сбора платформ (не чаще раза в 3 сек)."""
+        nonlocal last_progress, done
+        if done:
+            return
+        now = asyncio.get_event_loop().time()
+        if now - last_progress < 3:
+            return
+        last_progress = now
+        try:
+            from ..reporting.summary import PLATFORM_NAMES
+            name = PLATFORM_NAMES.get(platform, platform)
+            await status.edit_text(
+                f"Цель: <b>{query}</b>\nТеги: {tags_line}\n"
+                f"Собрано: <b>{count}</b> · 📡 {name}…"
+            )
+        except Exception:
+            pass
+
+    typing = asyncio.create_task(_keep_typing(message.bot, message.chat.id))
+    try:
+        result = await run_monitoring(query, tags, mode=mode, field=field,
+                                      progress_callback=_progress)
+    finally:
+        typing.cancel()
 
     if "error" in result:
-        await status.edit_text(result["error"])
+        done = True
+        try:
+            await status.edit_text(result["error"])
+        except Exception:
+            pass
         return
 
-    await status.delete()
+    done = True
+    try:
+        await status.delete()
+    except Exception:
+        pass
     title = _finish_title(field, mode, query)
     # После поиска — отмечаем специализированный (Himera) пробив и остаток пакета.
     used = himera.himera_budget_used()
@@ -197,8 +245,12 @@ async def run_blackbird(message: Message, raw: str):
         return
     status = await message.answer(f"🕊 Blackbird: ищу аккаунты «{raw}»… "
                                   "(может занять до минуты)")
-    # search_blackbird — синхронный (subprocess), иначе заморозит event loop
-    items = await asyncio.to_thread(search_blackbird, raw, "@" in raw, 40)
+    typing = asyncio.create_task(_keep_typing(message.bot, message.chat.id))
+    try:
+        # search_blackbird — синхронный (subprocess), иначе заморозит event loop
+        items = await asyncio.to_thread(search_blackbird, raw, "@" in raw, 40)
+    finally:
+        typing.cancel()
     await status.delete()
     if not items:
         await message.answer(f"🕊 <b>Blackbird: {raw}</b>\n\nНичего не найдено "

@@ -648,7 +648,7 @@ async def import_database_file(path, filename: str = "") -> dict:
     remote_note = ""
     new_sections: list[str] = []
     try:
-        if sb.enabled and fresh:
+        if sb.enabled:
             async with httpx.AsyncClient(timeout=60,
                                          headers=sb._headers) as client:
                 ok, msg = await sb.ensure_schema(client)
@@ -659,16 +659,22 @@ async def import_database_file(path, filename: str = "") -> dict:
                     new_sections = [s for s in sections if s not in known_remote]
                     for name in new_sections:
                         await sb.create_section(client, name)
+                    # Реестрируем факт загрузки ВСЕГДА (даже если все записи —
+                    # дубли): иначе реестр покажет меньше файлов, чем принято.
                     payload = {"file_name": meta.get("filename", ""),
                                "format": meta.get("format", ""),
                                "rows_total": len(records),
                                "sections_found": len(sections),
                                "sections_new": len(new_sections)}
                     await sb.insert_import(client, payload)
-                    ins, dup = await sb.insert_records(client, fresh)
-                    remote_note = (f"Supabase: +{ins} новых, "
-                                   f"{dup} дублей, "
-                                   f"{len(new_sections)} новых разделов")
+                    if fresh:
+                        ins, dup = await sb.insert_records(client, fresh)
+                        remote_note = (f"Supabase: +{ins} новых, "
+                                       f"{dup} дублей, "
+                                       f"{len(new_sections)} новых разделов")
+                    else:
+                        remote_note = (f"Supabase: все {len(records)} записей "
+                                       f"уже были в базе (дубли)")
         else:
             remote_note = _config_hint()
     except (httpx.HTTPError, SupabaseError) as ex:
@@ -680,10 +686,11 @@ async def import_database_file(path, filename: str = "") -> dict:
     profiles_saved = 0
     local_import_id = 0
     try:
+        local_import_id, _added, _skipped = await asyncio.to_thread(
+            _mirror_local, meta, records, len(sections), len(new_sections))
+        # Извлекаем профили из новых записей (локальное зеркало).
+        # Для записей-дублей профили уже извлечены при прошлых загрузках.
         if fresh:
-            local_import_id, _added, _skipped = await asyncio.to_thread(
-                _mirror_local, meta, fresh, len(sections), len(new_sections))
-            # Извлекаем профили из записей (локальное зеркало)
             profiles_saved = await asyncio.to_thread(
                 _extract_and_save_profiles, fresh, local_import_id, filename,
             )

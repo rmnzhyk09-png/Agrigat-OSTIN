@@ -1,12 +1,17 @@
 """Утилиты для работы с текстом."""
+import html
 import re
 
 
-def escape_html(text: str) -> str:
-    """Экранировать HTML."""
-    if not text:
+def escape_html(text) -> str:
+    """Экранировать HTML (и в тексте, и внутри атрибутов типа href="...").
+
+    Экранирует & < > " ', чтобы пользовательский/внешний контент не ломал
+    разметку parse_mode="HTML" и не инжектил теги.
+    """
+    if text is None:
         return ""
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html.escape(str(text), quote=True)
 
 
 def parse_tags(text: str) -> list[str]:

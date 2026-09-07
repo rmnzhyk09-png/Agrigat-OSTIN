@@ -121,6 +121,7 @@ class Catalog:
 
     def _esc(self, text: str) -> str:
         """Экранирование HTML."""
+        from .utils.text import escape_html
         if not text:
             return "—"
-        return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return escape_html(text)

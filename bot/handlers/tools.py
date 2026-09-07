@@ -95,9 +95,9 @@ async def cmd_rss(message: Message, command: CommandObject):
 
     lines = [f"<b>{_esc(feed['title'])}</b>", ""]
     for i, e in enumerate(feed["entries"], 1):
-        date = f" ({e['published']})" if e["published"] else ""
+        date = f" ({_esc(e['published'])})" if e["published"] else ""
         lines.append(
-            f"{i}. <a href=\"{e['url']}\">{_esc(e['title'])}</a>{date}\n"
+            f"{i}. <a href=\"{_esc(e['url'])}\">{_esc(e['title'])}</a>{date}\n"
             f"    {_esc(e['summary'][:120])}"
         )
     await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
@@ -128,9 +128,9 @@ async def cmd_scrape(message: Message, command: CommandObject):
     text = item["text"]
     title = item["title"]
     body = text.replace(title, "", 1).strip()[:1500]
-    links = "\n".join(f"- {l}" for l in item["links"][:10])
+    links = "\n".join(f"- {_esc(l)}" for l in item["links"][:10])
     await message.answer(
-        f"<b>{_esc(title)}</b>\n{item['url']}\n\n"
+        f"<b>{_esc(title)}</b>\n{_esc(item['url'])}\n\n"
         f"{_esc(body)}\n\n"
         + (f"<b>Ссылки:</b>\n{links}" if links else ""),
         parse_mode="HTML", disable_web_page_preview=True,
@@ -140,4 +140,5 @@ async def cmd_scrape(message: Message, command: CommandObject):
 # ---------- вспомогательное ----------
 
 def _esc(text: str) -> str:
-    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    from ..utils.text import escape_html
+    return escape_html(text)

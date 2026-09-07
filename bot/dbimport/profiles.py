@@ -22,6 +22,10 @@ def _norm(text) -> str:
 def _norm_phone(text) -> str | None:
     raw = str(text or "").strip()
     digits = re.sub(r"\D", "", raw)
+    # ОГРНИП (15 цифр), ОГРН (13), ИНН (10/12) и прочие справочники не являются
+    # телефон: длина настоящего номера — 7..13 цифр с учётом кода страны.
+    if not (7 <= len(digits) <= 13):
+        return None
     if len(digits) == 10:
         digits = "7" + digits
     elif len(digits) == 11 and digits.startswith(("7", "8")):
@@ -128,6 +132,56 @@ _COURT_AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+# Строки вида "Телефон: +7..." / "Телефон: 7900..." (записи Очко бога/getcontact)
+_TELEPHONE_LINE_RE = re.compile(
+    r"(?:телефон|тел\.?|моб\.?|phone)[ыа-яё]*[\s]*[:=\-\s]+\s*"
+    r"([+]?\d[\d\s().\-]{5,20})",
+    re.IGNORECASE,
+)
+# Телефоны, обёрнутые в .csv-строку: "+7(...), +7(...)"
+_PHONE_TOKENS_RE = re.compile(r"[+]?\d[\d\s().\-]{5,20}")
+# Имя/фамилия из записей Очко бога ("first_name: X", "last_name: Y")
+_LABEL_FIRST_RE = re.compile(
+    r"(?:first_name|имя)[\s]*[:=\-\s]+\s*([A-Za-zА-ЯЁа-яё][A-Za-zА-ЯЁа-яё@'.\-]{0,60})",
+    re.IGNORECASE,
+)
+_LABEL_LAST_RE = re.compile(
+    r"(?:last_name|фамилия)[\s]*[:=\-\s]+\s*([A-Za-zА-ЯЁа-яё][A-Za-zА-ЯЁа-яё@'.\-]{0,60})",
+    re.IGNORECASE,
+)
+_LABEL_MIDDLE_RE = re.compile(
+    r"(?:middle_name|отчество)[\s]*[:=\-\s]+\s*([A-Za-zА-ЯЁа-яё][A-Za-zА-ЯЁа-яё@'.\-]{0,60})",
+    re.IGNORECASE,
+)
+
+# ФИО из "ИП: 'Петров Пётр'", "ФИО: Петров Пётр", "Имя: ..." —
+# записи Taxi_ru/Georgia/500+500, где имя лежит в тексте, а не в fields.
+# Сепаратор НЕ пересекает перевод строки (иначе «ИП\nБатуми» уходит в имя).
+_LABEL_FIO_RE = re.compile(
+    r"(?:ФИО|имя|ип|владелец|директор|физическо[еи]\s+лиц[ао])"
+    r"[^\S\r\n]*[:=]?[^\S\r\n]*[\"']?[^\S\r\n]*"
+    r"([\wА-ЯЁа-яё][\wА-ЯЁа-яё' .\-]{1,80})",
+    re.IGNORECASE,
+)
+
+# Город/регион из "Город: ...", "Населённый пункт: ...", "Район: ..."
+_LABEL_CITY_RE = re.compile(
+    r"(?:город|гор\.?|населённ\w+\s+пункт|населенный\s+пункт|регион|район)[\s]*[:=\-\s]+\s*"
+    r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z .\-]{2,60})",
+    re.IGNORECASE,
+)
+
+# Знак «+» после имени ("Помазная Лидия Сергеевна +", "Светлана +" —
+# признак вызванного/подтверждённого контакта в базе типа 500+500).
+_LINE_NAME_PLUS_RE = re.compile(
+    r"(?m)^\s*([\wА-ЯЁа-яё][\wА-ЯЁа-яё' .\-]{1,100}?)\s*\+\s*$",
+)
+
+
+def _is_noise_name(value: str) -> bool:
+    """Отбрасывает мусорные значения (точки, одиночные буквы, пустые)."""
+    v = (value or "").strip(" .-")
+    return len(v) < 2
 
 
 def extract_fields_from_text(text: str) -> dict[str, Any]:
@@ -136,15 +190,104 @@ def extract_fields_from_text(text: str) -> dict[str, Any]:
     if not text:
         return result
 
+    # Телефоны из полей/строк "Телефон: ..." и токенов "+7..."
+    # (Очко бога / getcontact: сами номера лежат в тексте, а не в fields)
+    tel_set: set[str] = set()
+    for grp in _TELEPHONE_LINE_RE.findall(text):
+        norm = _norm_phone(grp)
+        if norm:
+            tel_set.add(norm)
+    # Дополнительный проход: любые "+7..." токены в тексте.
+    for tok in _PHONE_TOKENS_RE.findall(text):
+        norm = _norm_phone(tok)
+        if norm:
+            tel_set.add(norm)
+    if tel_set:
+        result["phones"] = sorted(tel_set)
+
+    # Имя/фамилия из "first_name:/last_name:" (Очко бога)
+    mf = _LABEL_FIRST_RE.search(text)
+    if mf and not _is_noise_name(mf.group(1)):
+        result["first_name"] = mf.group(1).strip()
+    ml = _LABEL_LAST_RE.search(text)
+    if ml and not _is_noise_name(ml.group(1)):
+        result["last_name"] = ml.group(1).strip()
+    mm = _LABEL_MIDDLE_RE.search(text)
+    if mm and not _is_noise_name(mm.group(1)):
+        result["patronymic"] = mm.group(1).strip()
+
+    # ФИО/ИП-владелец: "ИП: 'Ситников Юрий Андреевич'" (Taxi_ru),
+    # "ФИО: Эдвард Химшиашвили" (Georgia) — если нет явного first/last.
+    if not result.get("first_name") and not result.get("last_name"):
+        mfio = _LABEL_FIO_RE.search(text)
+        if mfio:
+            cand = _norm(mfio.group(1)).strip(" \"'")
+            if not _is_noise_name(cand) and "(" not in cand:
+                # Разбиваем "Фамилия Имя Отчество" → surname/first/patronymic
+                parts = cand.split()
+                if parts:
+                    result["full_name"] = cand
+                    if len(parts) >= 3:
+                        result["surname"] = parts[0]
+                        result["first_name"] = parts[1]
+                        result["patronymic"] = parts[2]
+                    elif len(parts) == 2:
+                        result["surname"] = parts[0]
+                        result["first_name"] = parts[1]
+
+    # Имя в строке вида "Помазная Лидия Сергеевна +" (500+500)
+    if not result.get("full_name") and not result.get("first_name"):
+        mplus = _LINE_NAME_PLUS_RE.search(text)
+        if mplus:
+            cand = _norm(mplus.group(1)).strip()
+            parts = cand.split()
+            if len(parts) >= 2 and not _is_noise_name(cand):
+                result["full_name"] = cand
+                result["surname"] = parts[0]
+                result["first_name"] = parts[1]
+                if len(parts) >= 3:
+                    result["patronymic"] = parts[2]
+
+    # Город (Taxi_ru): "Город: Нефтеюганск"
+    mcity = _LABEL_CITY_RE.search(text)
+    if mcity and not _is_noise_name(mcity.group(1)):
+        city = _norm(mcity.group(1)).strip()
+        if not any(fc in city for fc in ("город:", "г.:", "село", "деревня")):
+            result["city"] = city
+            # если нет жёсткого адреса — подставляем город как место регистрации
+            if not result.get("registration_address"):
+                result["registration_address"] = f"г. {city}"
+
     # ИНН
     inns = _INN_RE.findall(text)
     if inns:
-        result["inn"] = inns[0] if len(inns) == 1 else inns
+        phone_digits = {re.sub(r"\D", "", p) for p in result.get("phones") or []}
+        cands = [i for i in inns if i not in phone_digits]
+        # 12-значный контакт-телефон (код страны + номер, напр. Грузия) —
+        # не считать ИНН: телефоны старше и приоритетнее
+        filtered = [c for c in cands if not (len(c) == 12 and c.startswith("99"))]
+        if filtered:
+            result["inn"] = filtered[0] if len(filtered) == 1 else filtered[:1]
+        elif cands:
+            result["inn"] = cands[0]
 
     # СНИЛС
-    snils = _SNILS_RE.findall(text)
-    if snils:
-        result["snils"] = snils[0].replace(" ", "").replace("-", "")
+    snils_raw = _SNILS_RE.findall(text)
+    if snils_raw:
+        # Защита от ложных срабатываний: 11-значный СНИЛС, который на самом
+        # деле является телефоном ("+79529637711" == СНИЛС 11 цифр), не должен
+        # уезжать в snils. Грешим в сторону телефона, если номер совпадает с
+        # уже найденным телефоном или имеет префикс мобильного.
+        cand = snils_raw[0]
+        digits = re.sub(r"\D", "", cand)
+        tel_digits = (result.get("phones") or [])
+        tel_digits = [re.sub(r"\D", "", p) for p in tel_digits]
+        flagged = digits in tel_digits or (
+            len(digits) == 11 and digits.startswith(("79", "78", "89"))
+            and "-" not in cand and " " not in cand
+        )
+        if not flagged:
+            result["snils"] = digits
 
     # Паспорт
     pp = _PASSPORT_RE.search(text)
@@ -284,6 +427,24 @@ def build_profile_from_record(record: dict, source_file: str = "") -> dict[str, 
             result[k] = _unique(result[k] + v)
         elif k not in result or not result[k]:
             result[k] = v
+
+    # Имя из ролей first_name/last_name/patronymic (записи Очко бога):
+    # в них имя лежит в тексте, а не в fields["name"], поэтому собираем ФИО.
+    if not result.get("full_name"):
+        surname = result.get("surname") or result.get("last_name") or ""
+        fname = result.get("first_name") or ""
+        pname = result.get("patronymic") or ""
+        if fname or surname or pname:
+            result["full_name"] = " ".join(x for x in (surname, fname, pname) if x)
+            if result.get("surname") or result.get("last_name"):
+                result["surname"] = surname
+    if result.get("full_name") and not result.get("first_name"):
+        # На случай "Иванов Иван": first_name = вторая часть
+        parts = result["full_name"].split()
+        if len(parts) >= 2 and not result.get("first_name"):
+            result["first_name"] = parts[1]
+            if len(parts) >= 3 and not result.get("patronymic"):
+                result["patronymic"] = parts[2]
 
     # Мета
     if source_file:

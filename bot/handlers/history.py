@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from ..db.database import AsyncSessionLocal
 from ..db.models import SearchHistory
+from ..utils.text import escape_html as esc
 
 router = Router()
 
@@ -29,6 +30,6 @@ async def cmd_history(message: Message):
     lines = ["<b>История поиска (10):</b>", ""]
     for h in history:
         date = h.created_at.strftime("%d.%m.%Y %H:%M")
-        lines.append(f"- {date} — <code>{h.query}</code> ({h.results_count})")
+        lines.append(f"- {date} — <code>{esc(h.query)}</code> ({h.results_count})")
 
     await message.answer("\n".join(lines), parse_mode="HTML")

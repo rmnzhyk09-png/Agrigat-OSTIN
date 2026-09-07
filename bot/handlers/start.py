@@ -140,6 +140,7 @@ async def _send_help(message: Message):
         "/history — история операций\n"
         "/report — последний отчёт\n"
         "/status — журнал задач\n"
+        "/databases — базы в боевом реестре\n"
         "/cancel — отменить действие"
     )
     await message.answer(text, parse_mode="HTML", reply_markup=MENU)

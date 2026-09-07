@@ -4,6 +4,7 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 from ..catalog import Catalog
+from ..utils.text import escape_html as esc
 
 router = Router()
 
@@ -31,8 +32,8 @@ async def cmd_search(message: Message):
         lines.append(f"<b>Каталог: {len(results)}</b>")
         for bot in results:
             lines.append(
-                f"- <a href=\"{bot['url']}\">{bot['name']}</a> — "
-                f"{catalog.group_name(catalog._group_of(bot))}"
+                f"- <a href=\"{esc(bot['url'])}\">{esc(bot['name'])}</a> — "
+                f"{esc(catalog.group_name(catalog._group_of(bot)))}"
             )
         found += len(results)
         lines.append("")
@@ -48,12 +49,12 @@ async def cmd_search(message: Message):
                 if len(head) > 80:
                     head = head[:80] + "…"
                 author = (it.get("author") or "").strip()
-                author = f" — {author}" if author else ""
+                author = f" — {esc(author)}" if author else ""
                 url = it.get("url") or ""
                 if url.startswith("http"):
-                    lines.append(f"- <a href=\"{url}\">{head}</a>{author}")
+                    lines.append(f"- <a href=\"{esc(url)}\">{esc(head)}</a>{author}")
                 else:
-                    lines.append(f"- {head}{author}")
+                    lines.append(f"- {esc(head)}{author}")
             found += len(db_items)
             lines.append("")
     except Exception as ex:
@@ -67,10 +68,10 @@ async def cmd_search(message: Message):
             for p in profiles[:5]:
                 name = p.get("author") or "Без имени"
                 phones = p.get("profile", {}).get("phones") or []
-                phone_str = phones[0] if phones else "—"
+                phone_str = esc(phones[0]) if phones else "—"
                 conf = p.get("profile", {}).get("confidence") or ""
-                conf_str = f" · <i>{conf}</i>" if conf else ""
-                lines.append(f"- <b>{name}</b> · {phone_str}{conf_str}")
+                conf_str = f" · <i>{esc(conf)}</i>" if conf else ""
+                lines.append(f"- <b>{esc(name)}</b> · {phone_str}{conf_str}")
             found += len(profiles)
             lines.append("")
             lines.append("Подробная карточка: <code>/profile &lt;ФИО&gt;</code>")
@@ -81,5 +82,5 @@ async def cmd_search(message: Message):
         await message.answer("Ничего не найдено. Примеры запросов: телефон, ФИО, VIN, telegram")
         return
 
-    header = f"<b>Найдено по «{query}»: {found}</b>\n\n"
+    header = f"<b>Найдено по «{esc(query)}»: {found}</b>\n\n"
     await message.answer(header + "\n".join(lines), parse_mode="HTML")

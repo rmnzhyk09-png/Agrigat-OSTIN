@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".db", ".sqlite", ".sqlite3", ".sql", ".csv", ".json",
                         ".xlsx", ".zip", ".rar", ".7z", ".torrent", ".txt"}
 
+# Значения source-заглушек, которые не являются ни именем файла, ни таблицей:
+# появляются, когда парсер не знает происхождения строк (generic формат).
+# В таких случаях настоящий источник — имя файла, и его надо подставить.
+_GENERIC_SOURCES = {"csv", "xlsx", "txt"}
+
 # Ограничения при распаковке архивов (защита от «архивных» атак).
 # Настраиваются переменными окружения (Render → Environment):
 #   MAX_ARCHIVE_FILES   — максимум файлов в архиве (по умолчанию 1000)
@@ -124,21 +129,24 @@ def parse_file(path: str | Path, filename: str = "", _depth: int = 0) -> tuple[d
         records = vertical_matrix_records(rows, source)
 
     if not records and rows and isinstance(rows[0], dict):
+        real_source = filename or path.name
         columns_mode = _columns_mode(rows)
         for row in rows:
             if columns_mode:
-                recs = _normalize_columns(row, source)
+                recs = _normalize_columns(row, real_source[:255])
             else:
-                rec = _normalize(row, source)
+                rec = _normalize(row, real_source[:255])
                 recs = [rec] if rec else []
             for rec in recs:
-                rec["source"] = rec["source"] or (filename or path.name)
                 if fmt == "txt" and not rec.get("section"):
                     rec["section"] = (filename or path.stem)[:255]
                 records.append(rec)
 
     for rec in records:
-        rec["source"] = rec.get("source") or (filename or path.name)
+        gen = rec.get("source") or ""
+        if gen.lower() in _GENERIC_SOURCES:
+            rec["source"] = (filename or path.name)[:255]
+        rec["source"] = rec.get("source") or (filename or path.name)[:255]
         if fmt == "txt" and not rec.get("section"):
             rec["section"] = (filename or path.stem)[:255]
 

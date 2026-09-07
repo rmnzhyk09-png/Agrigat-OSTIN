@@ -46,8 +46,28 @@ def _results_dir() -> Path:
     return Path(settings.blackbird_dir) / "results"
 
 
-def _latest_json_for(identifier: str) -> Path | None:
-    """Самый свежий .json под ник/email в папке results."""
+def _newest_json_mtime() -> float:
+    """Самое свежее mtime среди всех .json в results/ (0 — файлов нет)."""
+    root = _results_dir()
+    if not root.is_dir():
+        return 0.0
+    newest = 0.0
+    for p in root.rglob("*.json"):
+        try:
+            newest = max(newest, p.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+def _latest_json_for(identifier: str, newer_than: float = 0.0) -> Path | None:
+    """Самый свежий .json под ник/email в папке results.
+
+    newer_than — если задано, берутся только файлы новее этого mtime.
+    Это защищает от подхвата устаревшего результата предыдущего запуска,
+    когда текущий запуск Blackbird закончился без находок (Blackbird
+    не сохраняет JSON, когда аккаунтов не найдено).
+    """
     root = _results_dir()
     if not root.is_dir():
         return None
@@ -55,9 +75,12 @@ def _latest_json_for(identifier: str) -> Path | None:
     for p in root.rglob("*.json"):
         if identifier.lower() in p.name.lower():
             try:
-                candidates.append((p.stat().st_mtime, p))
+                mtime = p.stat().st_mtime
             except OSError:
                 continue
+            if newer_than > 0 and mtime <= newer_than:
+                continue
+            candidates.append((mtime, p))
     if not candidates:
         return None
     candidates.sort(key=lambda x: x[0], reverse=True)
@@ -129,10 +152,10 @@ def _account_to_item(acc: dict, identifier: str) -> dict:
     }
 
 
-def _load_results(identifier: str) -> list[dict]:
-    path = _latest_json_for(identifier)
+def _load_results(identifier: str, newer_than: float = 0.0) -> list[dict]:
+    path = _latest_json_for(identifier, newer_than=newer_than)
     if not path:
-        logger.info("blackbird: нет JSON для %s", identifier)
+        logger.info("blackbird: свежего JSON для %s нет", identifier)
         return []
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -169,9 +192,13 @@ def search_blackbird(identifier: str, as_email: bool = False,
     identifier = (identifier or "").strip()
     if not identifier:
         return []
+    # Запоминаем самый свежий JSON до запуска: если Blackbird в этот раз
+    # ничего не найдёт, он НЕ перезапишет файл, и мы не подхватим
+    # вчерашний результат другого/этого же ника.
+    before = _newest_json_mtime()
     rc = _run_blackbird(identifier, as_email)
     if rc != 0:
         logger.info("blackbird: returncode=%s для %s", rc, identifier)
         return []
-    items = _load_results(identifier)
+    items = _load_results(identifier, newer_than=before)
     return items[:limit]

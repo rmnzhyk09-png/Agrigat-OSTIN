@@ -8,7 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 def _esc(text: str) -> str:
-    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    from .utils.text import escape_html
+    return escape_html(text)
 
 
 class DigestScheduler:
@@ -120,10 +121,10 @@ class DigestScheduler:
             if not fresh:
                 continue
 
-            lines = [f"<b>Новое по {group[0].query}:</b>", ""]
+            lines = [f"<b>Новое по {_esc(group[0].query)}:</b>", ""]
             for it in fresh[:5]:
                 head = (it["text"] or "").split("\n")[0][:80]
-                lines.append(f'- [{it["platform"]}] <a href="{it["url"]}">{_esc(head)}</a>')
+                lines.append(f'- [{_esc(it["platform"])}] <a href="{_esc(it["url"])}">{_esc(head)}</a>')
             if len(fresh) > 5:
                 lines.append(f"… и ещё {len(fresh) - 5}")
 

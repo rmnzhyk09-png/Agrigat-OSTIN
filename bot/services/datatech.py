@@ -126,15 +126,33 @@ async def _request(search_options: list[dict]) -> dict:
 
 
 def _flatten(payload: dict) -> list[dict]:
-    """Разворачивает ответ {data: {<база>: {data:[…]}}} в плоский список записей."""
-    data = payload.get("data") or payload
+    """Разворачивает ответ в плоский список записей.
+
+    Принимает разные формы:
+      {"data": {"<база>": {"data": [...]}}}
+      {"data": {"<база>": [...]}}
+      {"data": [...]}
+      {"result": ...} / {"results": ...} (запасной вариант)
+    """
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data") if isinstance(payload.get("data"), (dict, list)) else payload
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
     if not isinstance(data, dict):
         return []
     out: list[dict] = []
     for db_name, group in data.items():
+        if isinstance(group, list):
+            for row in group:
+                if isinstance(row, dict):
+                    rec = dict(row)
+                    rec.setdefault("db_name", db_name)
+                    out.append(rec)
+            continue
         if not isinstance(group, dict):
             continue
-        rows = group.get("data") or []
+        rows = group.get("data") or group.get("rows") or group.get("results") or []
         if not isinstance(rows, list):
             continue
         for row in rows:

@@ -224,7 +224,12 @@ def _build_params(query: str, qtype: str) -> dict:
     return {qtype: q}
 
 
-async def _request(qtype: str, params: dict) -> dict:
+async def _request(qtype: str, params: dict) -> tuple[dict, bool]:
+    """Шлёт POST в Himera. Возвращает (payload, charged).
+
+    charged=True только когда API реально обработал запрос (HTTP < 400):
+    по ошибкам сети/сервера бюджет пакета НЕ тратится.
+    """
     base = (getattr(settings, "himera_base_url", None) or DEFAULT_BASE_URL).strip()
     key = settings.himera_api_key
     url = f"{base.rstrip('/')}/{qtype}"
@@ -236,14 +241,14 @@ async def _request(qtype: str, params: dict) -> dict:
             r = await client.post(url, data=data, headers=headers)
         except httpx.HTTPError as ex:
             logger.debug("himera request error: %s", ex)
-            return {}
+            return {}, False
         if r.status_code >= 400:
             logger.info("himera: HTTP %s %s", r.status_code, r.text[:200])
-            return {}
+            return {}, False
         try:
-            return r.json()
+            return r.json(), True
         except ValueError:
-            return {}
+            return {}, True
 
 
 def _rows(payload: dict) -> list[dict]:
@@ -323,8 +328,9 @@ async def search_himera(query: str, limit: int = 10, field: str = "") -> list[di
         logger.info("himera: тип не распознан, пропускаем («%s»)", q[:60])
         return []
     params = _build_params(q, qtype)
-    payload = await _request(qtype, params)
-    _budget_spend()
+    payload, charged = await _request(qtype, params)
+    if charged:
+        _budget_spend()
     rows = _rows(payload)
     report_url = (payload or {}).get("url") or ""
     items = [_row_to_item(r, q, report_url) for r in rows]
