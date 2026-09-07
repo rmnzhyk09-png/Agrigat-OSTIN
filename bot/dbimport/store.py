@@ -51,16 +51,34 @@ class SupabaseError(Exception):
 
 
 class SupabaseStore:
-    """PostgREST-клиент для таблиц db_imports / db_sections / db_records."""
+    """PostgREST-клиент для таблиц db_imports / db_sections / db_records.
 
-    def __init__(self):
-        self.enabled = bool(settings.supabase_url and settings.supabase_service_key)
-        self.url = settings.supabase_url.rstrip("/") + "/rest/v1" if self.enabled else ""
-        self.key = settings.supabase_service_key
-        self.pat = settings.supabase_pat
-        self.ref = settings.supabase_project_ref
+    Поддерживает несколько проектов: index=0 — основной (для записи),
+    остальные — дополнительные (для поиска веером).
+    """
+
+    def __init__(self, index: int = 0):
+        projects = getattr(settings, "supabase_projects", [])
+        if projects:
+            index = min(index, len(projects) - 1)
+            cfg = projects[index]
+        else:
+            cfg = {}
+        self.index = index
+        self.enabled = bool(cfg.get("url") and cfg.get("service_key"))
+        self.url = cfg.get("url", "").rstrip("/") + "/rest/v1" if self.enabled else ""
+        self.key = cfg.get("service_key", "")
+        self.pat = cfg.get("pat", "")
+        self.ref = cfg.get("project_ref", "")
         self._headers = ({"apikey": self.key, "Authorization": f"Bearer {self.key}",
                           "Content-Type": "application/json"} if self.enabled else {})
+
+    @staticmethod
+    def all_enabled() -> list["SupabaseStore"]:
+        """Все настроенные (включённые) проекты, primary первый."""
+        projects = getattr(settings, "supabase_projects", [])
+        stores = [SupabaseStore(i) for i in range(len(projects))]
+        return [s for s in stores if s.enabled]
 
     # ---------- таблицы ----------
 

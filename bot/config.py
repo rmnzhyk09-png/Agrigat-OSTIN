@@ -75,6 +75,27 @@ class Settings:
         self.supabase_project_ref = os.getenv("SUPABASE_PROJECT_REF", "").strip()
         self.supabase_pat = os.getenv("SUPABASE_ACCESS_TOKEN", "").strip()
 
+        # Несколько Supabase-проектов (для распределения записи/поиска по БД,
+        # когда один проект упирается в CPU/лимиты free-плана).
+        # Основной — SUPABASE_URL (+ service key). Дополнительные:
+        #   SUPABASE_URL_2      = https://xxxx.supabase.co
+        #   SUPABASE_SERVICE_ROLE_KEY_2 = ...
+        #   SUPABASE_PROJECT_REF_2 / SUPABASE_ACCESS_TOKEN_2 = ... (опционально)
+        # (и SUPABASE_URL_3 / _4 ... по той же схеме)
+        self.supabase_projects: list[dict] = []
+        self._supabase_add(self.supabase_url, self.supabase_service_key,
+                           self.supabase_project_ref, self.supabase_pat)
+        idx = 2
+        while True:
+            u = os.getenv(f"SUPABASE_URL_{idx}", "").strip().rstrip("/")
+            k = os.getenv(f"SUPABASE_SERVICE_ROLE_KEY_{idx}", "").strip()
+            if not (u and k):
+                break
+            r = os.getenv(f"SUPABASE_PROJECT_REF_{idx}", "").strip()
+            p = os.getenv(f"SUPABASE_ACCESS_TOKEN_{idx}", "").strip()
+            self._supabase_add(u, k, r, p)
+            idx += 1
+
         # Supabase Storage: бакет для сохранения загруженных файлов (/import_url).
         # Публичный бакет даёт прямую ссылку на файл для просмотра в админке.
         self.supabase_bucket = os.getenv("SUPABASE_BUCKET", "imports").strip()
@@ -127,6 +148,18 @@ class Settings:
                                         "instagram.com,youtube.com,youtu.be,files.fm,"
                                         "t.me,telegram.org,threads.net,tiktok.com")
                               .split(",") if h.strip()]
+
+    def _supabase_add(self, url: str, service_key: str,
+                      project_ref: str, pat: str) -> None:
+        """Добавляет проект в список (только если заданы URL + ключ)."""
+        if not (url and service_key):
+            return
+        self.supabase_projects.append({
+            "url": url.rstrip("/"),
+            "service_key": service_key,
+            "project_ref": project_ref,
+            "pat": pat,
+        })
 
     def validate(self) -> list[str]:
         """Проверяет обязательные настройки."""

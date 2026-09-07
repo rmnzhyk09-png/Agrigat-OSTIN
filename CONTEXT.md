@@ -31,7 +31,7 @@ Telegram OSINT-бот «AGRIGAT OSTIN» — `unified-monitor/`. aiogram 3.x, SQL
 2. Himera привязан к IP — на Render IP не авторизован в ЛК Himera → возвращает `{"error":"invalid ip adress"}` (код корректно считает 0 затрат).
 3. env-переменные в панели Render вводятся вручную (`sync: false`). Ключи уже на Render.
 4. Один токен = один бот — одновременный polling на Render + локально даёт Conflict.
-5. У пользователя ДВА supabase-проекта (qokujzqkeprvqnoxviuc и jzvmxqsfailsjqjkuxyb). Код читает только `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` (без `_2`). Нужно проверить, в каком проекте реальные 2.1M записей и где искать/индексировать.
+5. У пользователя ДВА supabase-проекта (qokujzqkeprvqnoxviuc — primary, лежит в recovery `57P03 hot standby`; jzvmxqsfailsjqjkuxyb — #2, ACTIVE_HEALTHY). Код уже читает оба через `_2`-переменные (config.py + store.py, в HEAD `1cc7d06`). Мы создали полную схему (base + schema_profiles + indexes_trgm) в #2 — таблицы есть, пустые. Реальные 2.1M записей — в локальном зеркале и в упавшем primary; пока primary в recovery, поиск работает через фан-аут ##+локальное зеркало.
 
 ## UX/код — что уже сделано в этой сессии
 - Прогресс-фидбек: `_keep_typing` (ChatAction/TYPING) + `_progress` (обновление «Собрано: N · 📡 платформа»), применяется к `run_monitoring` и Blackbird.
@@ -46,3 +46,17 @@ Telegram OSINT-бот «AGRIGAT OSTIN» — `unified-monitor/`. aiogram 3.x, SQL
 
 ## Важно про безопасность
 Пользователь в этой сессии присылал реальные ключи (BOT_TOKEN, supabase service-role, DATATECH, OPENAI) в чат. Их НЕ переносить в файлы/коммиты. Если чат утёк — ключи считаются скомпрометированными, стоит перевыпустить в Supabase/панели.
+
+## Координация сессий (согласовано с пользователем, СЕЙЧАС)
+Дата согласования: текущая рабочая точка. HEAD = `a9b38df`. Коммитов НЕ делаем, пока обе сессии ведут параллельные правки — сначала фиксируем план.
+
+**Разделение ответственности:**
+- **Сессия A (поиск/БД):** `bot/dbimport/query.py`, `tools/build_fts.py` (НОВЫЙ — FTS5 trigram индекс), индексы, схема #2, реестр `/databases`. Правит ТОЛЬКО эти файлы.
+- **Сессия B (остальное):** tasks.py, провайдеры, handlers, деплой, render.yaml-env, UX. НЕ трогает `bot/dbimport/query.py`, пока сессия A не подтвердит стабильную точку.
+
+**Незакоммиченные правки сессии A (в рабочей копии, поверх `a9b38df`):**
+`bot/dbimport/query.py` (FTS в `_search_local` — быстрый поиск по зеркалу ~0.01s вместо 28-30s, без обрезки охвата; `return_exceptions=True` в трёх gather; таймаут одного проекта 60s→8s; телефон-FTS по цифрам), `tools/build_fts.py` (новый, gitignored пока — требует force-add), `.env` (токен→...MI, BOT_OWNER_ID, LLM_*, `_2`-ключи; НЕ коммитить), `.env.example`/`render.yaml` (LLM_*, BOT_OWNER_ID).
+
+**Кто коммитит:** после фиксации обеих стабильных точек — последовательно (не параллельно), чтобы избежать конфликтов. Пуш не делаем (нет GitHub PAT).
+
+**Проверка слова для «не обрезать поиск»:** любые правки не уменьшают охват поиска по всем файлам (лимиты только на выдачу). FTS не обрезает — ищет по всем записям, фильтрует в Python.

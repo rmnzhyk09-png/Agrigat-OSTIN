@@ -90,9 +90,8 @@ def _to_item(row: dict) -> dict:
 
 # ---------- Supabase ----------
 
-async def _search_supabase(query: str, mode: str, limit: int,
+async def _search_supabase(sb: SupabaseStore, query: str, mode: str, limit: int,
                            field: str = "") -> list[dict]:
-    sb = SupabaseStore()
     q = _sanitize(query)
     if not (sb.enabled and q):
         return []
@@ -111,7 +110,9 @@ async def _search_supabase(query: str, mode: str, limit: int,
         params["or"] = (f"(section.ilike.*{q}*,text.ilike.*{q}*,"
                         f"source.ilike.*{q}*,author.ilike.*{q}*)")
 
-    async with httpx.AsyncClient(timeout=60, headers=sb._headers) as client:
+    # Короткий таймаут на проект: если проект недоступен — не блокируем
+    # ответ 60 секундами, а быстро уходим в фолбэк/другой источник.
+    async with httpx.AsyncClient(timeout=8, headers=sb._headers) as client:
         r = await client.get(sb.url + "/db_records", params=params)
         r.raise_for_status()
         return [_to_item(row) for row in r.json()]
@@ -141,15 +142,93 @@ def _haystack_for(r, field: str) -> str:
     return " ".join(x for x in parts if x).lower()
 
 
+def _fts_search(q: str, field: str, limit: int) -> list[dict]:
+    """Поиск через FTS5 trigram (подстроковый, миллисекунды).
+
+    Возвращает список dict-записей. Если индекс недоступен (не построен)
+    или запрос физически не применим — возвращаем None, чтобы вызывающий
+    код перешёл на Python-скан.
+    """
+    from ..db.database import sync_engine
+
+    q_clean = (q or "").strip().lower()
+    if len(q_clean) < 3:
+        return None
+    q_digits = "".join(c for c in q if c.isdigit())
+    fts_terms = re.findall(r"[a-zа-яё0-9_+\-]{3,}", q_clean)
+    if not fts_terms:
+        return None
+    if field == "phone" and q_digits:
+        # Телефоны: ищем весь цифровой хвост (нормализованный), чтобы
+        # '900 123' -> '900123' попадал как подстрока в '+7(900)123...'.
+        term = q_digits[-12:] if len(q_digits) > 12 else q_digits
+        if len(term) < 3:
+            return None
+    else:
+        term = fts_terms[0]
+    try:
+        with sync_engine.connect() as conn:
+            sql = ("SELECT r.id AS record_id, r.text, r.author, r.source, "
+                   "r.section, r.url, r.date "
+                   "FROM db_records_fts f "
+                   "JOIN db_records r ON r.id = f.record_id "
+                   "WHERE db_records_fts MATCH ? "
+                   "ORDER BY f.rowid DESC LIMIT ?")
+            params = (f'"{term}"', max(limit * 8, 100))
+            rows = conn.exec_driver_sql(sql, params).mappings().all()
+    except Exception:
+        logger.debug("fts search failed, fallback to scan", exc_info=True)
+        return None
+    out: list[dict] = []
+    q_digits = "".join(c for c in q if c.isdigit())
+    for r in rows:
+        record = {
+            "id": r["record_id"], "checksum": r["record_id"],
+            "section": r["section"], "source": r["source"],
+            "author": r["author"], "text": r["text"] or "",
+            "url": r["url"], "date": r["date"],
+        }
+        ok: bool
+        if field == "phone" and q_digits:
+            # Телефоны в записях форматированы ('+7 (900) 123-45-67'),
+            # а пользователь может ввести цифры подряд/с разделителями —
+            # сверяем по «только цифры» без учёта форматирования.
+            ok = q_digits in "".join(c for c in record["text"] if c.isdigit())
+        else:
+            haystack = _haystack_for(_FtsRow(record), field)
+            ok = q_clean in haystack
+        if not ok:
+            continue
+        out.append(_to_item(record))
+        if len(out) >= limit:
+            break
+    return out
+
+
+class _FtsRow:
+    """Минимальный адаптер record -> поля для _haystack_for."""
+    def __init__(self, record: dict):
+        self.text = record.get("text") or ""
+        self.author = record.get("author") or ""
+        self.section = record.get("section") or ""
+        self.source = record.get("source") or ""
+
+
 def _search_local(query: str, mode: str, limit: int, field: str = "") -> list[dict]:
     """Поиск по локальному зеркалу.
 
-    Фильтруем в Python: SQLite-функция lower() не знает кириллицу,
-    поэтому case-insensitive поиск по Unicode делаем на стороне кода.
+    Сначала пробуем FTS5 (trigram) — подстроковый поиск за миллисекунды по
+    сотням тысяч записей. Если индекс не построен (tools/build_fts.py),
+    запрос короче 3 символов или FTS не сумел выполниться — фильтруем в
+    Python: SQLite-функция lower() не знает кириллицу, поэтому
+    case-insensitive поиск по Unicode делаем на стороне кода.
     """
     q = (query or "").strip().lower()
     if not q:
         return []
+    fts_res = _fts_search(q, field, limit)
+    if fts_res is not None:
+        return fts_res
     q_digits = "".join(c for c in q if c.isdigit())
     with SyncSessionLocal() as session:
         stmt = select(DbRecord).order_by(DbRecord.id.desc())
@@ -191,10 +270,28 @@ async def search_imported(query: str, mode: str = "query", limit: int = 20,
         q = parsed_val
     if not q:
         q = (query or "").strip()
-    sb = SupabaseStore()
-    if sb.enabled:
+    stores = SupabaseStore.all_enabled()
+    if stores:
         try:
-            return await _search_supabase(q, mode, limit, field)
+            # return_exceptions: если один проект упал (например 503), не теряем
+            # результаты живых проектов в этом же пуле.
+            results = await asyncio.gather(
+                *[_search_supabase(sb, q, mode, limit, field) for sb in stores],
+                return_exceptions=True)
+            seen: set[str] = set()
+            out: list[dict] = []
+            for batch in results:
+                if isinstance(batch, BaseException):
+                    logger.warning("supabase search project error: %s", batch)
+                    continue
+                for it in batch:
+                    key = it.get("post_id") or it.get("id") or ""
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(it)
+            if out:
+                return out[:limit]
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase search fallback to local: %s", ex)
     return await asyncio.to_thread(_search_local, q, mode, limit, field)
@@ -471,10 +568,9 @@ def _profile_row_to_item_supabase(row: dict) -> dict:
     }
 
 
-async def _search_profiles_supabase(query: str, limit: int = 5,
+async def _search_profiles_supabase(sb: SupabaseStore, query: str, limit: int = 5,
                                     field: str = "") -> list[dict]:
     """Ищет профили в Supabase db_profiles через PostgREST."""
-    sb = SupabaseStore()
     q = (query or "").strip()
     if not (sb.enabled and q):
         return []
@@ -561,12 +657,26 @@ async def search_profiles(query: str, limit: int = 5, field: str = "") -> list[d
         q = parsed_val
     if not q:
         q = (query or "").strip()
-    sb = SupabaseStore()
-    if sb.enabled:
+    stores = SupabaseStore.all_enabled()
+    if stores:
         try:
-            res = await _search_profiles_supabase(q, limit, field)
-            if res:
-                return res
+            results = await asyncio.gather(
+                *[_search_profiles_supabase(sb, q, limit, field) for sb in stores],
+                return_exceptions=True)
+            seen: set[str] = set()
+            out: list[dict] = []
+            for batch in results:
+                if isinstance(batch, BaseException):
+                    logger.warning("supabase profile search project error: %s", batch)
+                    continue
+                for it in batch:
+                    key = it.get("id") or it.get("post_id") or ""
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(it)
+            if out:
+                return out[:limit]
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase profile search fallback to local: %s", ex)
     return await asyncio.to_thread(_search_profiles_local, q, limit, field)
@@ -696,10 +806,10 @@ def _search_related_local(identifiers: dict, hit_profile_ids: set,
     return list(related.values())
 
 
-async def _search_related_supabase(identifiers: dict, hit_profile_ids: set,
+async def _search_related_supabase(sb: SupabaseStore, identifiers: dict,
+                                   hit_profile_ids: set,
                                    hit_record_ids: set) -> list[dict]:
     """Связанные записи/профили в Supabase по телефонам/email/ИНН/авто."""
-    sb = SupabaseStore()
     if not sb.enabled:
         return []
     phones = identifiers.get("phones") or []
@@ -782,13 +892,27 @@ async def search_related(records: list[dict], profiles: list[dict]) -> list[dict
     if not has_identifiers:
         return []
 
-    sb = SupabaseStore()
-    if sb.enabled:
+    stores = SupabaseStore.all_enabled()
+    if stores:
         try:
-            res = await _search_related_supabase(identifiers, hit_profile_ids,
-                                                hit_record_ids)
-            if res:
-                return res
+            results = await asyncio.gather(
+                *[_search_related_supabase(sb, identifiers, hit_profile_ids,
+                                           hit_record_ids) for sb in stores],
+                return_exceptions=True)
+            seen: set[str] = set()
+            out: list[dict] = []
+            for batch in results:
+                if isinstance(batch, BaseException):
+                    logger.warning("supabase related project error: %s", batch)
+                    continue
+                for it in batch:
+                    key = it.get("id") or it.get("post_id") or ""
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(it)
+            if out:
+                return out[:150]
         except (httpx.HTTPError, ValueError) as ex:
             logger.warning("supabase related fallback to local: %s", ex)
 
