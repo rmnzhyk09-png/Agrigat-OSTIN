@@ -69,6 +69,30 @@ Manual Deploy. В логах ждать:
 | `XFGB0`/`ffmpeg` ошибки | ffmpeg есть в образе (`python:3.11-slim` + apt). |
 | Бот не отвечает | `/status` в Telegram → видно режим и память. |
 
+## Если бот молчит: webhook вместо polling
+
+Симптом в логах:
+
+```
+TelegramConflictError: Conflict: can't use getUpdates method while webhook is active
+```
+
+Это не «второй бот с тем же токеном» (тот конфликт называется
+`terminated by other getUpdates request`). Webhook и polling несовместимы,
+пока он висит — бот не видит сообщений вообще.
+
+Что делать:
+
+1. Render → Shell → `sh deploy/webhook_reset.sh`
+   Скрипт покажет `getMe` (какой именно токен у сервиса), снимет webhook и
+   напечатает `url:""`. Локально (нужен VPN): `.\deploy\webhook_reset.ps1`.
+2. Если в `getWebhookInfo` поле `url` непустое и меняется после каждого
+   рестарта — webhook ставит кто-то ещё (другой проект/сервис с этим токеном).
+   У `getWebhookInfo` есть `ip_address` и `url` — они показывают, кто именно.
+3. Голосовой бот снимает webhook сам при старте (`bot.py`, `on_startup`), так
+   что после следующего деплоя проблема не вернётся. В логах будет строка
+   `webhook ... был активен — снесён`, если он снова появится.
+
 ## Локальный запуск (Windows)
 
 ```
