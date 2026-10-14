@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.mp3
+*.ogg
+*.wav
+venv/
+venv_xtts/
+.voice_cache/

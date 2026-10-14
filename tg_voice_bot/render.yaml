@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: agrigat-ostin
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    # Free: 512 МБ RAM хватает — XTTS убран, синтез идёт через edge-tts/gTTS.
+    # Нужен пинг /health каждые 10 минут (UptimeRobot), иначе free-засыпает
+    # через 15 минут и polling встаёт. Если OOM — поменять на standard.
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: TZ
+        value: Europe/Moscow
