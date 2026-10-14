@@ -191,6 +191,10 @@ def _get_local_tts():
     import torch
 
     torch.set_num_threads(max(1, THREADS))
+    try:
+        torch.set_num_interop_threads(1)  # меньше пулов планировщика — меньше RAM
+    except Exception:
+        pass
     torch.set_grad_enabled(False)
 
     from TTS.api import TTS

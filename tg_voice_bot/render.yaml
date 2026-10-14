@@ -20,7 +20,7 @@ services:
       - key: MITINI_THREADS
         value: "2"
       - key: MITINI_MAX_CHARS
-        value: "400"
+        value: "300"
       - key: MALLOC_ARENA_MAX
         value: "2"
       - key: OMP_NUM_THREADS

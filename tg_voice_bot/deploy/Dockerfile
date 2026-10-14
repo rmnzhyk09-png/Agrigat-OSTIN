@@ -16,9 +16,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HUB_DISABLE_TELEMETRY=1 \
     HF_HOME=/opt/render/project/src/data/models
 
-# ffmpeg — конвертация голосовых и ogg; libsndfile — librosa/звук XTTS
+# ffmpeg — конвертация голосовых и ogg; libsndfile — librosa/звук XTTS.
+# libgomp1 — без него torch не импортируется (No module named libgomp.so.1).
+# build-essential/python3-dev — страховка: если coqui-tts соберётся из исходников.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg git curl ca-certificates libsndfile1 \
+        ffmpeg git curl ca-certificates libsndfile1 libgomp1 libglib2.0-0 \
+        build-essential python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/render/project/src
