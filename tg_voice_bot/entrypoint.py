@@ -53,6 +53,11 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
+    from voice_clone import mem_mb, status
+
+    st = status()
+    print(f"[boot] свободно {mem_mb()} МБ, синтез: {st['backend']}, "
+          f"режим {st['mode']}, образец: {'есть' if st['ref'] else 'нет (пришли /ref)'}")
     srv = Server((HOST, PORT), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"health: http://{HOST}:{PORT}/health")

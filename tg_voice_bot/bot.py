@@ -1,4 +1,4 @@
-import os, asyncio, tempfile, subprocess, shutil, html, logging, socket
+import os, asyncio, tempfile, subprocess, shutil, html, logging, socket, threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,7 +9,7 @@ from telegram.ext import (
 import speech_recognition as sr
 import edge_tts
 import gtts
-from voice_clone import clone_voice, warmup, shutdown, HAS_XTTS
+from voice_clone import clone_voice, warmup, shutdown, has_ref, save_ref, status as xtts_status
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
@@ -113,6 +113,8 @@ async def cmd_start(u: Update, _):
         "- или просто напиши текстом\n\n"
         "Команды:\n"
         "/voice clone|soft|calm|warm - сменить тембр\n"
+        "/ref - прислать голос, который нужно клонировать\n"
+        "/status - что внутри\n"
         "/reset - забыть контекст"
     )
 
@@ -122,12 +124,42 @@ async def cmd_voice(u: Update, ctx):
     if v not in VOICES:
         await u.message.reply_text(f"Доступно: {', '.join(VOICES)}")
         return
-    if v == "clone" and not HAS_XTTS:
+    if v == "clone" and not has_ref():
         return await u.message.reply_text(
-            "Клон пока не настроен. Положи свой образец в voice_ref.wav."
+            "Клон ещё не настроен. Пришли /ref и голосовое с тем голосом — запомню."
         )
     ctx.user_data["voice"] = v
     await u.message.reply_text(f"Хорошо, буду звучать иначе: {v}")
+
+
+async def cmd_ref(u: Update, ctx):
+    if u.message.text and u.message.text.strip().split()[-1].lower() in ("off", "clear", "нет"):
+        try:
+            from voice_clone import REF
+            REF.unlink(missing_ok=True)
+        except OSError:
+            pass
+        ctx.user_data.pop("expect_ref", None)
+        return await u.message.reply_text("Образец удалён, вернусь к обычным голосам.")
+    ctx.user_data["expect_ref"] = True
+    await u.message.reply_text(
+        "Пришли голосовое сообщение голосом, который нужно клонировать — "
+        "до 45 секунд спокойной речи, без музыки и шума. Запомню и буду им звучать."
+    )
+
+
+async def cmd_status(u: Update, _):
+    st = xtts_status()
+    ref = st["ref"] or "не задан (пришли /ref)"
+    mem = f"свободно {st['mem_mb']} МБ" if st["mem_mb"] else "свободно н/д"
+    rss = f", процесс {st['rss_mb']} МБ" if st.get("rss_mb") else ""
+    await u.message.reply_text(
+        f"Синтез: {st['backend']}, режим {st['mode']}, {st['threads']} потока(ов)\n"
+        f"Память: {mem}{rss}\n"
+        f"Образец: {ref}\n"
+        f"Модель: {st['model']}"
+        + (f"\nОшибка: {st['fail']}" if st["fail"] else "")
+    )
 
 
 async def cmd_reset(u: Update, ctx):
@@ -143,6 +175,24 @@ async def handle_voice(u: Update, ctx):
     m = u.message
     ogg = Path(tempfile.gettempdir()) / f"in_{m.message_id}.ogg"
     await (await m.get_file()).download_to_drive(str(ogg))
+
+    if ctx.user_data.pop("expect_ref", None):
+        try:
+            ref = save_ref(ogg)
+        except Exception as e:
+            log.warning("ref save fail: %s", e)
+            return await m.reply_text(
+                "Не получилось разобрать запись. Нужно голосовое до 45 секунд, "
+                "где слышно только голос."
+            )
+        finally:
+            if ogg.exists():
+                os.remove(ogg)
+        ctx.user_data["voice"] = "clone"
+        return await m.reply_text(
+            f"Запомнила этот голос ({ref.stat().st_size // 1024} КБ). "
+            "Первый ответ будет долгим — модель грузится. Дальше быстрее."
+        )
 
     try:
         text = await asyncio.to_thread(transcribe, ogg_to_wav(str(ogg)))
@@ -225,6 +275,8 @@ def main():
         .post_init(lambda a: a.bot.set_my_commands([
             BotCommand("start", "старт"),
             BotCommand("voice", "сменить тембр"),
+            BotCommand("ref", "прислать голос для клона"),
+            BotCommand("status", "что внутри"),
             BotCommand("reset", "очистить контекст"),
         ]))
         .build()
@@ -232,10 +284,18 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("voice", cmd_voice))
+    app.add_handler(CommandHandler("ref", cmd_ref))
+    app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
+
+    def _warm():
+        if has_ref():
+            warmup()
+
+    threading.Thread(target=_warm, daemon=True).start()
 
     log.info("подключаюсь к Telegram%s", f" через прокси {proxy}" if proxy else "")
     try:

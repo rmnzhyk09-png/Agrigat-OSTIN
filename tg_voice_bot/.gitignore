@@ -5,6 +5,7 @@ __pycache__/
 *.mp3
 *.ogg
 *.wav
+data/
 venv/
 venv_xtts/
 .voice_cache/
