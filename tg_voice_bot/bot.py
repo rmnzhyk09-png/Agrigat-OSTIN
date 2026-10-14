@@ -14,6 +14,10 @@ from voice_clone import clone_voice, warmup, shutdown, has_ref, save_ref, status
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 GPT_KEY = os.getenv("OPENAI_API_KEY") or ""
+# Любой OpenAI-совместимый провайдер: Groq, Gemini, OpenRouter, Together.
+# Меняется только через env, код трогать не нужно.
+LLM_BASE = (os.getenv("OPENAI_BASE_URL") or "").strip()
+LLM_MODEL = os.getenv("MITINI_LLM_MODEL", "gpt-4o-mini")
 
 
 def find_ffmpeg() -> str | None:
@@ -89,15 +93,15 @@ def transcribe(wav: str) -> str:
 
 async def ask_llm(uid: int, text: str, ctx) -> str:
     if not GPT_KEY:
-        return f"Услышал: {text}. Ключ OpenAI не задан, поэтому отвечаю эхом."
+        return f"{text} — услышала. Ключ LLM не задан, поэтому отвечаю эхом."
     from openai import AsyncOpenAI
-    client = AsyncOpenAI(api_key=GPT_KEY)
+    client = AsyncOpenAI(api_key=GPT_KEY, base_url=LLM_BASE or None)
 
     hist = ctx.user_data.setdefault("history", [])
     hist.append({"role": "user", "content": text})
 
     r = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=LLM_MODEL,
         messages=[{"role": "system", "content": SYS_PROMPT}, *hist[-10:]],
     )
     reply = r.choices[0].message.content
@@ -157,7 +161,10 @@ async def cmd_status(u: Update, _):
         f"Синтез: {st['backend']}, режим {st['mode']}, {st['threads']} потока(ов)\n"
         f"Память: {mem}{rss}\n"
         f"Образец: {ref}\n"
-        f"Модель: {st['model']}"
+        f"Модель: {st['model']}\n"
+        f"Мозги: {LLM_MODEL}"
+        + (f" @ {LLM_BASE}" if LLM_BASE else "")
+        + ("" if GPT_KEY else " — ключа нет, отвечаю эхом")
         + (f"\nОшибка: {st['fail']}" if st["fail"] else "")
     )
 
