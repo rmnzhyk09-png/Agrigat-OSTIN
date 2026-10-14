@@ -173,8 +173,12 @@ async def handle_voice(u: Update, ctx):
             "Не найден ffmpeg. Поставь его и добавь в PATH - без него я не слышу голосовые."
         )
     m = u.message
-    ogg = Path(tempfile.gettempdir()) / f"in_{m.message_id}.ogg"
-    await (await m.get_file()).download_to_drive(str(ogg))
+    media = next((getattr(m, a, None) for a in ("voice", "audio", "video_note", "document")
+                  if getattr(m, a, None)), None)
+    if media is None:
+        return await m.reply_text("Не поняла формат записи. Пришли голосовое сообщение.")
+    ogg = Path(tempfile.gettempdir()) / f"in_{m.message_id}.bin"
+    await (await media.get_file()).download_to_drive(str(ogg))
 
     if ctx.user_data.pop("expect_ref", None):
         try:
@@ -195,22 +199,23 @@ async def handle_voice(u: Update, ctx):
         )
 
     try:
-        text = await asyncio.to_thread(transcribe, ogg_to_wav(str(ogg)))
-    except sr.UnknownValueError:
-        return await m.reply_text("Я тебя не расслышала. Скажи ещё раз, поближе к микрофону.")
-    except Exception as e:
-        log.warning("stt fail: %s", e)
-        return await m.reply_text("Запись получилась битая. Попробуем ещё разок?")
+        try:
+            text = await asyncio.to_thread(transcribe, ogg_to_wav(str(ogg)))
+        except sr.UnknownValueError:
+            return await m.reply_text("Я тебя не расслышала. Скажи ещё раз, поближе к микрофону.")
+        except Exception as e:
+            log.warning("stt fail: %s", e)
+            return await m.reply_text("Запись получилась битая. Попробуем ещё разок?")
 
-    await m.reply_text(f"Ты: {text}")
+        await m.reply_text(f"Ты: {text}")
 
-    reply = await ask_llm(m.from_user.id, text, ctx)
-    mp3 = await synth(reply, ctx.user_data.get("voice", "soft"))
-    await m.reply_voice_note(mp3)
-
-    for p in (ogg, Path(str(ogg).replace(".ogg", ".wav"))):
-        if p.exists():
-            os.remove(p)
+        reply = await ask_llm(m.from_user.id, text, ctx)
+        mp3 = await synth(reply, ctx.user_data.get("voice", "soft"))
+        await m.reply_voice_note(mp3)
+    finally:
+        for p in (ogg, Path(str(ogg).rsplit(".", 1)[0] + ".wav")):
+            if p.exists():
+                os.remove(p)
 
 
 async def handle_text(u: Update, ctx):
