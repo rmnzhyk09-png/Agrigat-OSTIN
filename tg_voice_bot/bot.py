@@ -243,6 +243,30 @@ def check_connection(timeout: int = 12) -> str | None:
     return None
 
 
+async def on_startup(app):
+    """Команды в меню + снос webhook: polling и webhook несовместимы.
+
+    Если на бота раньше ставили webhook (другой сервис, BotFather, старый деплой),
+    getUpdates отвечает Conflict, и бот молча не видит сообщения.
+    """
+    await app.bot.set_my_commands([
+        BotCommand("start", "старт"),
+        BotCommand("voice", "сменить тембр"),
+        BotCommand("ref", "прислать голос для клона"),
+        BotCommand("status", "что внутри"),
+        BotCommand("reset", "очистить контекст"),
+    ])
+    try:
+        info = await app.bot.get_webhook_info()
+        if info.url:
+            await app.bot.delete_webhook(drop_pending_updates=True)
+            log.warning("webhook %s был активен — снесён, иначе был бы Conflict", info.url)
+        else:
+            log.info("webhook не установлен, polling")
+    except Exception as e:
+        log.warning("не смог проверить webhook: %s", e)
+
+
 def main():
     if not TOKEN:
         raise SystemExit("BOT_TOKEN не найден. Открой файл .env и вставь токен от BotFather.")
@@ -272,13 +296,7 @@ def main():
         .token(TOKEN)
         .get_updates_connect_timeout(45)
         .connection_pool_size(1)
-        .post_init(lambda a: a.bot.set_my_commands([
-            BotCommand("start", "старт"),
-            BotCommand("voice", "сменить тембр"),
-            BotCommand("ref", "прислать голос для клона"),
-            BotCommand("status", "что внутри"),
-            BotCommand("reset", "очистить контекст"),
-        ]))
+        .post_init(on_startup)
         .build()
     )
 
