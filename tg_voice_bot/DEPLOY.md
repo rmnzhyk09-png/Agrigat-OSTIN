@@ -18,18 +18,25 @@
 Тариф: **standard** (2 ГБ, $25) в режиме int8. Если в логах `MemoryError` или
 `режим ... не подошёл` — `pro` (8 ГБ, $85), там fp32 влезает гарантированно.
 
-## Переключение существующего сервиса (вручную, 5 минут)
+## Переключение существующего сервиса
+
+Dockerfile лежит в корне репозитория, контекст сборки — корень. Значит в панели
+достаточно одного поля.
 
 Settings → Build & Deploy:
 
 | Поле | Значение |
 |---|---|
 | Branch | `voice` |
-| Root Directory | `tg_voice_bot` |
-| Dockerfile Path | `./deploy/Dockerfile` |
-| Docker Context | `.` |
+| Root Directory | _(пусто, корень репо)_ |
+| Dockerfile Path | `./Dockerfile` |
 
 Instance Type: **standard**. Health Check Path: `/health`.
+
+Проверка, что собрался нужный бот: в логе сборки должно быть
+`FROM python:3.11-slim` и `COPY tg_voice_bot/...`. Если видишь
+`python:3.12-slim`, `COPY bot/` или `blackbird` — сборка идёт по старой ветке
+или с другого Branch'а.
 
 Settings → Environment:
 

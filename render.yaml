@@ -1,66 +1,36 @@
 services:
   - type: web
-    name: unified-monitor-bot
+    name: agrigat-ostin
     runtime: docker
-    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # XTTS v2 в режиме int8/bf16 + 2 потока укладывается в 2 ГБ Standard.
+    # Если в логах OOM или «режим ... не подошёл» — поставить plan: pro (8 ГБ).
+    plan: standard
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: BOT_TOKEN
         sync: false
-      - key: BOT_OWNER_ID
+      - key: OPENAI_API_KEY
         sync: false
-      - key: RSS_FEEDS
-        sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: SUPABASE_PROJECT_REF
-        sync: false
-      - key: SUPABASE_ACCESS_TOKEN
-        sync: false
-      - key: SUPABASE_URL_2
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY_2
-        sync: false
-      - key: SUPABASE_PROJECT_REF_2
-        sync: false
-      - key: SUPABASE_ACCESS_TOKEN_2
-        sync: false
-      - key: LLM_API_KEY
-        sync: false
-      - key: LLM_BASE_URL
-        sync: false
-      - key: LLM_MODEL
-        sync: false
-      - key: BOT_OWNER_ID
-        sync: false
-      - key: HIMERA_BASE_URL
-        sync: false
-      - key: HIMERA_MAX_REQUESTS
-        sync: false
-      - key: DATATECH_API_KEY
-        sync: false
-      - key: DATATECH_BASE_URL
-        sync: false
-      - key: SERPER_API_KEY
-        sync: false
-      - key: BLACKBIRD_DIR
-        sync: false
-      - key: BLACKBIRD_PYTHON
-        sync: false
-      - key: BLACKBIRD_TIMEOUT
-        sync: false
-      - key: SNOOP_DIR
-        sync: false
-      - key: SNOOP_PYTHON
-        sync: false
-      - key: SNOOP_TIMEOUT
-        sync: false
-      - key: SNOOP_BASE
-        sync: false
-      - key: MAX_IMPORT_DOWNLOAD_MB
-        sync: false
-      - key: DB_LOCAL_WINDOW
-        sync: false
+      # auto — перебор int8 -> bf16 -> fp32 по мере нехватки памяти
+      - key: MITINI_MODE
+        value: auto
+      - key: MITINI_THREADS
+        value: "2"
+      - key: MITINI_MAX_CHARS
+        value: "300"
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: OMP_NUM_THREADS
+        value: "2"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: TZ
+        value: Europe/Moscow
+    # Модель XTTS (~2 ГБ) не перекачивается при каждом рестарте
+    disk:
+      name: models
+      mountPath: /app/data
+      sizeGB: 5
