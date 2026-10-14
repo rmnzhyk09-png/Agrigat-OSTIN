@@ -26,7 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN pip install torch==2.8.0 torchaudio==2.8.0 \
+# Без пина: так pip ставит пару torch 2.14.1+cpu / torchaudio 2.11.0+cpu,
+# под которую совместим torchcodec 0.17 из requirements. Пины тут ломали сборку.
+RUN pip install torch torchaudio \
         --index-url https://download.pytorch.org/whl/cpu
 
 COPY tg_voice_bot/deploy/requirements.txt ./requirements-voice.txt

@@ -5,5 +5,7 @@ gTTS==2.5.4
 openai
 python-dotenv
 coqui-tts==0.27.5
-transformers==4.53.3
+# coqui-tts 0.27.5 требует transformers>=4.57. Пин 4.53.3 ломал pip (ResolutionImpossible),
+# а без верхней границы pip ставил transformers 5.x, с которым coqui не работает.
+transformers>=4.57,<5
 torchcodec
